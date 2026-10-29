@@ -1,0 +1,42 @@
+[
+  {
+    "query": "عقد البيع العقاري",
+    "relevant_doc_ids": []
+  },
+  {
+    "query": "التسجيل والتحفيظ العقاري",
+    "relevant_doc_ids": []
+  },
+  {
+    "query": "الملكية والحيازة",
+    "relevant_doc_ids": []
+  },
+  {
+    "query": "الكراء والإفراغ",
+    "relevant_doc_ids": []
+  },
+  {
+    "query": "الرهن العقاري",
+    "relevant_doc_ids": []
+  },
+  {
+    "query": "القسمة والشياع",
+    "relevant_doc_ids": []
+  },
+  {
+    "query": "التعرض على مطلب التحفيظ",
+    "relevant_doc_ids": []
+  },
+  {
+    "query": "التعويض عن نزع الملكية",
+    "relevant_doc_ids": []
+  },
+  {
+    "query": "الاختصاص القضائي العقاري",
+    "relevant_doc_ids": []
+  },
+  {
+    "query": "التقادم في الحقوق العينية",
+    "relevant_doc_ids": []
+  }
+]
