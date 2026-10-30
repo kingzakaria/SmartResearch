@@ -39,7 +39,8 @@ def main() -> None:
             "n_words": words,
             "category": None,          # filled later by clustering (Step 5)
             "text": doc["text"],       # full cleaned text (used for RAG chunks and display)
-            "body": doc["body"],       # text without the metadata lines (used for indexing)
+            "body": doc["body"],       # without header lines and closing ritual (used for indexing)
+            "closing": doc["closing"], # panel, prosecutor, clerk: kept apart from the indexed text
         })
 
     config.PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
@@ -56,6 +57,12 @@ def main() -> None:
         print(f"  {field:12s}: {ok}/{n} ({100 * ok / n:.1f}%)")
     complete = sum(all(d[k] is not None for k in FIELDS) for d in documents)
     print(f"  all 4 fields : {complete}/{n} ({100 * complete / n:.1f}%)")
+
+    with_closing = sum(bool(d["closing"]) for d in documents)
+    print(f"\nClosing ritual cut from the body: {with_closing}/{n} ({100 * with_closing / n:.1f}%)")
+    no_closing = [d["filename"] for d in documents if not d["closing"]]
+    if no_closing:
+        print(f"  no closing found ({len(no_closing)}): {no_closing[:20]}")
 
     years = Counter(d["year"] for d in documents if d["year"])
     print(f"\nDecisions per year: {dict(sorted(years.items()))}")

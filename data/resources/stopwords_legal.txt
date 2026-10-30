@@ -1,24 +1,37 @@
-المحكمة
-المحكمه
-الطاعن
-الطاعنة
-المطعون
-المطعون_ضده
+# Boilerplate of the Court of Cassation decisions: words present in (almost) every file,
+# so their IDF is ~0 and they cannot separate documents.
+# STARTING DRAFT built from the most frequent words of the corpus. It is refined with document
+# frequency once the index exists (words in > 80-90% of documents are candidates).
+#
+# The analyzer removes these words AND every word with the same stem, so الطاعن / الطاعنين /
+# الطاعنة need only one line. Because of that, never list a word whose stem is also a topic word:
+#   NOT listed: بناء (construction), القانون (قانون التحفيظ العقاري), تاريخ (تاريخ التقييد),
+#               الحكم, الطلب, الاستئناف (kept until the IDF analysis says otherwise).
+
+# header and procedure vocabulary
+بتاريخ
+الصادر
+الصادرة
+عدد
+رقم
 قرار
 القرار
-حكم
-الحكم
-حيث
-بناء
-لذلك
-لهذه
-الأسباب
-الاسباب
-ملف
-القضية
-قضية
-جلسة
-الطلب
-طلبات
-مقال
-المحكمة_العليا
+قرارها
+محكمة
+المحكمة
+النقض
+الملف
+المداولة
+طبقا
+
+# parties (labels that appear in every decision)
+المطعون
+المطلوب
+الطاعن
+المدعي
+المدعى
+السيد
+السيدة
+المذكور
+المذكورة
+بن
