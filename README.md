@@ -1,33 +1,76 @@
-# Arabic Legal Text Mining
+# Arabic Legal Decisions Search
 
 A reproducible, offline-first text-mining project for Arabic legal decisions. It
-includes document extraction, Arabic normalization and analysis, TF-IDF/BM25
-search, clustering, supervised classification, a hybrid retrieval/RAG pipeline,
-and evaluation utilities.
+includes Arabic document extraction and analysis, a web-based search interface,
+TF-IDF/BM25 retrieval, decision similarity, clustering, supervised
+classification, a retrieval-augmented generation (RAG) pipeline, and evaluation
+utilities. The web interface is in Arabic and uses a right-to-left layout.
 
-## Requirements and setup
+## Requirements
 
-Use Python 3.10 or later. From the repository root:
+- Python 3.10 or later
+- Node.js and npm (for the React web interface)
 
+## Set up the Python environment
+
+From the repository root:
 ```powershell
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
 ```
 
+The Python requirements include the FastAPI service used by the web interface.
+
+## Prepare the decision index
+
 Put UTF-8 `.txt` decisions in `data/raw/real_estate_chamber/`. The project does
-not include private case files. Keep source files unchanged; generated data and
-models are written to `data/processed/` and `models/`.
+not include private case files. Keep source files unchanged; extracted and
+processed data are written to `data/processed/`, and the search index is written
+to `models/`.
 
-## Run the pipeline
-
-Run scripts from the repository root in order:
-
+Run the indexing steps from the repository root:
 ```powershell
 python scripts/00_data_check.py
 python scripts/01_extract.py
 python scripts/02_analyze.py
 python scripts/03_build_index.py
+```
+
+The API loads `models/index.pkl` when it first needs the index. Build the index
+before starting the web interface if that file is not already present.
+
+## Run the web interface
+
+Start the API in one terminal:
+```powershell
+.\.venv\Scripts\Activate.ps1
+python -m uvicorn app.api:app --reload --port 8000
+```
+
+In a second terminal, install the frontend dependencies and start the React app:
+```powershell
+cd frontend
+npm ci
+npm run dev
+```
+
+Open the local address printed by Vite (by default
+`http://localhost:5173`). During development, Vite forwards `/api` requests to
+the API on port 8000. The API's interactive documentation is available at
+`http://localhost:8000/docs`.
+
+The interface supports Arabic query search, optional matching of all query
+words, suggested terms, paginated results, highlighted snippets, and full
+decision text with similar-decision links. Similarity can be explored using
+cosine, Dice, Jaccard, Euclidean, and Manhattan measures.
+
+## Run the pipeline
+
+After preparing the index, run other pipeline steps from the repository root
+as needed:
+
+```powershell
 python scripts/04_search_cli.py
 python scripts/05_cluster.py
 python scripts/06_label.py
@@ -36,34 +79,30 @@ python scripts/08_build_rag.py
 python scripts/09_run_evaluation.py
 ```
 
-The initial checkout has no decision files or labels. Extraction and analysis
-report empty input without fabricating records; clustering needs at least two
-documents, and classifier training needs at least two labeled classes. Edit
-`data/eval/queries.json` to add relevant document IDs before interpreting search
-scores. The RAG questions in `data/eval/questions.json` are editable examples.
+Clustering needs at least two documents, and classifier training needs at least
+two labeled classes. Edit `data/eval/queries.json` to add relevant document IDs
+before interpreting search scores. The RAG questions in
+`data/eval/questions.json` are editable examples.
 
-Search can also be used interactively after building the index:
+## Optional Streamlit app
 
-```powershell
-python scripts/04_search_cli.py
-```
-
-## Streamlit app
-
-Install the optional UI dependency and launch it from the repository root:
+The repository also includes a Streamlit interface. Install Streamlit
+separately, then launch it from the repository root:
 
 ```powershell
 python -m pip install streamlit
 streamlit run app/streamlit_app.py
 ```
 
-The app's search and retrieval features work offline. The answer generator is
-extractive by default and only quotes sentences retrieved from the corpus; it
-does not call an external LLM.
+The answer generator is extractive by default and uses sentences retrieved
+from the corpus.
 
 ## Project layout
 
 - `config.py`: paths and tunable pipeline defaults.
+- `app/api.py`: FastAPI endpoints for search, documents, statistics, and similar decisions.
+- `frontend/`: React/Vite Arabic RTL web interface.
+- `app/streamlit_app.py`: optional Streamlit interface.
 - `src/extraction/`, `src/morphology/`: source loading, metadata, Arabic text analysis.
 - `src/indexing/`, `src/search/`, `src/similarity/`: lexical retrieval and metrics.
 - `src/reduction/`, `src/clustering/`, `src/classification/`: course workflows.
@@ -75,8 +114,8 @@ stemmer is a conservative light stemmer implemented in this project; stemming
 can be disabled or switched to the optional NLTK ISRI stemmer. Metadata
 extraction is heuristic and should be checked against the source collection.
 
-Run tests with:
+Run the Python tests with:
 
 ```powershell
-python -m unittest discover -s tests -v
+python -m pytest
 ```
