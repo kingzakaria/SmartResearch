@@ -1,2 +1,6 @@
-numpy>=1.24
-scikit-learn>=1.3
+# core (steps 1-4)
+pytest
+# web interface (step 4b)
+fastapi
+uvicorn
+httpx
