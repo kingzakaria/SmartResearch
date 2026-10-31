@@ -59,7 +59,7 @@ export default function SearchPage() {
   const topScore = data?.results[0]?.score || 1;
 
   return (
-    <>
+    <div className={`search-page${q.trim() ? "" : " search-page--landing"}`}>
       <form className="searchbox" onSubmit={submit} role="search">
         <input
           type="search"
@@ -68,7 +68,7 @@ export default function SearchPage() {
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           placeholder={T.searchPlaceholder}
-          aria-label="Search query"
+          aria-label="عبارة البحث"
           autoFocus
         />
         <button type="submit">{T.searchButton}</button>
@@ -97,7 +97,7 @@ export default function SearchPage() {
       )}
 
       {data && (
-        <section aria-live="polite" className={loading ? "is-loading" : ""}>
+        <section aria-live="polite" aria-busy={loading} className={`search-results${loading ? " is-loading" : ""}`}>
           <Reading data={data} onPick={(term) => go({ q: term, all })} />
 
           {data.results.length > 0 && (
@@ -150,7 +150,7 @@ export default function SearchPage() {
           )}
         </section>
       )}
-    </>
+    </div>
   );
 }
 

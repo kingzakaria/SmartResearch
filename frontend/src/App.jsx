@@ -8,8 +8,8 @@ export default function App() {
     <>
       <header className="topbar">
         <Link to="/" className="brand">
-          <span className="brand-name">{T.appName}</span>
-          <span className="brand-sub">{T.appSub}</span>
+          <span className="brand-title" lang="ar" dir="rtl">{T.appTitle}</span>
+          <span className="brand-sub" lang="ar" dir="rtl">{T.appSub}</span>
         </Link>
       </header>
       <main className="page">
