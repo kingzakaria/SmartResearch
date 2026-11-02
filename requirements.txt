@@ -4,3 +4,5 @@ pytest
 fastapi
 uvicorn
 httpx
+# classification (step 7)
+scikit-learn

@@ -64,6 +64,18 @@ class InvertedIndex:
             found.update(self.postings.get(term, ()))
         return found
 
+    def subset(self, doc_ids) -> "InvertedIndex":
+        """A smaller index holding only `doc_ids`: one partition. Terms absent from them are not kept."""
+        wanted = {str(d) for d in doc_ids}
+        part = InvertedIndex()
+        part.doc_len = {d: n for d, n in self.doc_len.items() if d in wanted}
+        part.meta = dict(self.meta)
+        for term, docs in self.postings.items():
+            kept = {d: c for d, c in docs.items() if d in wanted}
+            if kept:
+                part.postings[term] = kept
+        return part
+
     @property
     def avg_doc_len(self) -> float:
         return sum(self.doc_len.values()) / self.n_docs if self.n_docs else 0.0

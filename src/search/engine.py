@@ -8,6 +8,7 @@ Spelling: a query term that is not in the index gets "did you mean" suggestions 
 Boolean option: require_all=True keeps only the documents that contain ALL the query terms (AND).
 """
 import json
+import time
 import warnings
 from dataclasses import dataclass, field
 
@@ -17,6 +18,7 @@ from ..morphology.analyzer import analyzer_from_config
 from ..similarity import measures
 from ..similarity.levenshtein import suggest
 from .highlight import find_matches, make_snippet
+from .partitions import Partitions
 
 
 @dataclass
@@ -31,6 +33,8 @@ class Result:
     subject: str | None
     matched_terms: list[str]
     snippet: str
+    category: str | None = None                        # category of the decision (from its subject line)
+    group: int | None = None                           # partition of the document (None without partitions)
 
 
 @dataclass
@@ -42,6 +46,9 @@ class SearchResponse:
     ignored: list[str] = field(default_factory=list)   # terms in every document (IDF = 0)
     total: int = 0                                     # documents with a positive score
     results: list[Result] = field(default_factory=list)
+    scored: int = 0                                    # documents whose score was computed
+    took_ms: float = 0.0
+    routing: dict | None = None                        # partitioned search: groups searched, similarity to centroids
 
 
 def _doc_order(doc_id: str):
@@ -57,6 +64,9 @@ class SearchEngine:
         self.documents = {str(d["doc_id"]): d for d in docs}
         self._vocabulary = None
         self._snippet_cache: dict = {}
+        self.partitions: Partitions | None = None
+        self.categories: dict[str, str] = {}               # doc_id -> category
+        self.category_names: dict[str, str] = {}           # category -> Arabic name
 
     @classmethod
     def from_config(cls, config) -> "SearchEngine":
@@ -70,10 +80,37 @@ class SearchEngine:
                              f"{analyzer.mode!r}: run scripts/02_analyze.py and 03_build_index.py again")
         model = TfidfModel(index, config.LOG_BASE)
         documents = json.loads(config.DOCUMENTS_JSON.read_text(encoding="utf-8"))
-        return cls(analyzer, model, documents)
+        engine = cls(analyzer, model, documents)
+        engine._load_categories(config)
+        path = getattr(config, "PARTITIONS_JSON", None)
+        if path and path.exists():
+            engine.load_partitions(json.loads(path.read_text(encoding="utf-8")))
+        return engine
+
+    def _load_categories(self, config) -> None:
+        """Categories are optional: without labels.csv the search simply has no category filter."""
+        from ..analysis.categories import category_names, propagate_to_duplicates, read_labels
+        labels_path = getattr(config, "LABELS_CSV", None)
+        if not (labels_path and labels_path.exists()):
+            return
+        dup_path = getattr(config, "DUPLICATES_JSON", None)
+        dup = json.loads(dup_path.read_text(encoding="utf-8")) if dup_path and dup_path.exists() else {}
+        self.categories = propagate_to_duplicates(read_labels(labels_path), dup.get("groups", []), dup.get("drop", []))
+        rules_path = config.RESOURCES_DIR / "category_rules.json"
+        self.category_names = category_names(rules_path) if rules_path.exists() else {}
+
+    def load_partitions(self, data: dict) -> None:
+        """Enable the partitioned search. Ignored (with a warning) if it was built for other documents."""
+        if set(map(str, data["assignments"])) != set(self.index.doc_len):
+            warnings.warn("partitions.json does not match the index: run scripts/07_build_partitions.py again")
+            return
+        self.partitions = Partitions(data, self.index, self.model)
 
     # ---------- search ----------
-    def search(self, query: str, k: int = 10, require_all: bool = False) -> SearchResponse:
+    def search(self, query: str, k: int = 10, require_all: bool = False, n_probe: int | None = None,
+               category: str | None = None) -> SearchResponse:
+        """n_probe=None searches every document; n_probe=1 only the best group, 2 the best two groups, ..."""
+        started = time.perf_counter()
         terms = self.analyzer.analyze(query)
         response = SearchResponse(query=query, terms=terms)
         if not terms:
@@ -85,7 +122,14 @@ class SearchEngine:
         for term in response.unknown:
             response.suggestions[term] = suggest(term, self._vocab(), k=3, df=self.index.df)
 
-        scores = self.model.cosine_scores(terms)
+        if n_probe and self.partitions is not None:
+            groups, sims, fallback = self.partitions.route(terms, n_probe)
+            scores = self.partitions.cosine_scores(terms, groups)
+            response.routing = {"groups": groups, "similarity": [round(s, 4) for s in sims],
+                                "fallback": fallback, "k": self.partitions.k}
+        else:
+            scores = self.model.cosine_scores(terms)
+        response.scored = len(scores)
         if require_all:                                  # Boolean AND on the known terms
             if response.unknown:
                 scores = {}                              # an unknown term can never be in a document
@@ -93,11 +137,14 @@ class SearchEngine:
                 keep = set.intersection(*(set(self.index.postings[t]) for t in known)) if known else set()
                 scores = {d: s for d, s in scores.items() if d in keep}
         scores = {d: s for d, s in scores.items() if s > 0}
+        if category:                                     # keep only the decisions of this category
+            scores = {d: s for d, s in scores.items() if self.categories.get(d) == category}
 
         response.total = len(scores)
         ranked = sorted(scores.items(), key=lambda item: (-item[1], _doc_order(item[0])))[:k]
         response.results = [self._result(rank, doc_id, score, terms)
                             for rank, (doc_id, score) in enumerate(ranked, 1)]
+        response.took_ms = round((time.perf_counter() - started) * 1000, 2)
         return response
 
     def _result(self, rank: int, doc_id: str, score: float, terms: list[str]) -> Result:
@@ -110,6 +157,8 @@ class SearchEngine:
             subject=doc.get("subject"),
             matched_terms=sorted(t for t in set(terms) if self.index.count(t, doc_id) > 0),
             snippet=make_snippet(body, spans),
+            category=self.categories.get(doc_id),
+            group=self.partitions.group_of(doc_id) if self.partitions else None,
         )
 
     # ---------- documents similar to a given document ----------

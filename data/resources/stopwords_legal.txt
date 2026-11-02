@@ -35,3 +35,26 @@
 المذكور
 المذكورة
 بن
+
+# Months (Gregorian, Moroccan and Hijri names): a date carries no topic, and the month would otherwise
+# characterise the SESSION a decision was issued in (found by the chi-square check of scripts/09).
+يناير
+فبراير
+مارس
+أبريل
+ابريل
+ماي
+مايو
+يونيو
+يوليوز
+يوليو
+غشت
+أغسطس
+شتنبر
+سبتمبر
+أكتوبر
+اكتوبر
+نونبر
+نوفمبر
+دجنبر
+ديسمبر

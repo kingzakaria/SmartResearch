@@ -47,6 +47,7 @@ export default function DocumentPage() {
             <div><dt>{T.date}</dt><dd>{formatDate(doc.date) || "—"}</dd></div>
             <div><dt>{T.words}</dt><dd>{doc.n_words?.toLocaleString("en") ?? "—"}</dd></div>
             <div><dt>{T.file}</dt><dd>{doc.filename}</dd></div>
+            {doc.category && <div><dt>{T.category}</dt><dd lang="ar" dir="rtl">{doc.category_ar || doc.category}</dd></div>}
           </dl>
 
           {q && (

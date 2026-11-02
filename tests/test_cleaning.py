@@ -96,3 +96,44 @@ def test_phrase_far_from_the_end_is_a_quotation_not_a_closing():
 
 def test_invisible_characters_are_removed():
     assert clean_text("قرار" + chr(0x200F) + chr(0xFEFF) + " محكمة") == "قرار محكمة"
+
+
+# ---------- names of the court members ----------
+from src.extraction.cleaner import strip_panel_names  # noqa: E402
+
+
+def test_panel_names_are_removed_but_the_useful_words_stay():
+    text = ("وبعد تلاوة المستشار المقرر السيد عبد الوهاب عافلاني لتقريره والاستماع إلى\n"
+            "ملاحظات المحامي العام السيد رشيد صدوق الرامية إلى رفض الطلب.")
+    out = strip_panel_names(text)
+    for name in ("عبد", "عافلاني", "رشيد", "صدوق"):
+        assert name not in out
+    assert "المستشار المقرر لتقريره" in out and "المحامي العام الرامية إلى رفض الطلب" in out
+
+
+def test_composition_and_clerk_names_are_removed():
+    text = ("منصف رئيسا والمستشارين السادة عبد الوهاب عافلاني ،مقررا، محمد اسراج، محمد شافي،\n"
+            "وسمير رضوان أعضاء وبمحضر المحامي العام السيد رشيد صدوق وبمساعدة كاتبة الضبط السيدة فاطمة الزهراء.")
+    out = strip_panel_names(text)
+    for name in ("منصف", "عافلاني", "اسراج", "شافي", "رضوان", "رشيد", "صدوق", "فاطمة"):
+        assert name not in out
+    assert "كاتبة الضبط" in out
+
+
+def test_ordinary_text_is_not_touched():
+    text = "قضت المحكمة بإفراغ المدعى عليه بعد أن ثبت للمحكمة احتلاله العقار بدون سند. السيد المحافظ على الملكية العقارية."
+    assert strip_panel_names(text) == text
+
+
+def test_composition_with_colon_and_rapporteur_in_the_middle():
+    text = ("منصف رئيسا والمستشارين السادة: محمد شافي مقررا ومحمد اسراج وعبد الوهاب عافلاني\n"
+            "وسمير رضوان أعضاء وبمحضر المحامي العام السيد رشيد صدوق وبمساعدة كاتبة الضبط")
+    out = strip_panel_names(text)
+    for name in ("منصف", "شافي", "اسراج", "عافلاني", "رضوان", "رشيد", "صدوق"):
+        assert name not in out
+
+
+def test_rapporteur_followed_by_presentation_of_the_prosecutor():
+    text = "وبعد تلاوة التقرير من طرف المستشار المقرر السيد محمد اسراج وتقديم المحامي العام السيد رشيد صدوق ملاحظاته."
+    out = strip_panel_names(text)
+    assert "اسراج" not in out and "صدوق" not in out and "وتقديم المحامي العام" in out and "ملاحظاته" in out

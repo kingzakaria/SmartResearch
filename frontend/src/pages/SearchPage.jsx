@@ -13,10 +13,13 @@ export default function SearchPage() {
   const q = params.get("q") || "";
   const all = params.get("all") === "1";
   const k = Number(params.get("k")) || PAGE;
+  const category = params.get("category") || "";
+  const scope = Number(params.get("scope")) || 0; // 0 = every decision, n = the n best groups
 
   const [draft, setDraft] = useState(q);
   const [data, setData] = useState(null);
   const [stats, setStats] = useState(null);
+  const [categories, setCategories] = useState([]);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
 
@@ -24,6 +27,7 @@ export default function SearchPage() {
 
   useEffect(() => {
     api.stats().then(setStats).catch(() => {});
+    api.categories().then((d) => setCategories(d.categories)).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -35,31 +39,34 @@ export default function SearchPage() {
     let cancelled = false;
     setLoading(true);
     api
-      .search(q, k, all)
+      .search(q, k, all, scope, category)
       .then((d) => !cancelled && (setData(d), setError(null)))
       .catch((e) => !cancelled && setError(e))
       .finally(() => !cancelled && setLoading(false));
     return () => {
       cancelled = true;
     };
-  }, [q, all, k]);
+  }, [q, all, k, scope, category]);
 
   const go = (next) => {
     const p = {};
     if (next.q) p.q = next.q;
     if (next.all) p.all = "1";
+    if (next.scope) p.scope = String(next.scope);
+    const chosen = next.category === undefined ? category : next.category;
+    if (chosen) p.category = chosen;
     if (next.k && next.k !== PAGE) p.k = String(next.k);
     setParams(p);
   };
   const submit = (e) => {
     e.preventDefault();
-    go({ q: draft.trim(), all });
+    go({ q: draft.trim(), all, scope });
   };
 
   const topScore = data?.results[0]?.score || 1;
 
   return (
-    <div className={`search-page${q.trim() ? "" : " search-page--landing"}`}>
+    <>
       <form className="searchbox" onSubmit={submit} role="search">
         <input
           type="search"
@@ -73,9 +80,30 @@ export default function SearchPage() {
         />
         <button type="submit">{T.searchButton}</button>
         <label className="toggle" title={T.matchAllHint}>
-          <input type="checkbox" checked={all} onChange={(e) => go({ q, all: e.target.checked })} />
+          <input type="checkbox" checked={all} onChange={(e) => go({ q, all: e.target.checked, scope })} />
           {T.matchAll}
         </label>
+        {categories.length > 0 && (
+          <label className="scope">
+            {T.category}
+            <select value={category} onChange={(e) => go({ q, all, scope, category: e.target.value })}>
+              <option value="">{T.categoryAll}</option>
+              {categories.map((c) => (
+                <option key={c.name} value={c.name}>{`${c.name_ar} (${c.count})`}</option>
+              ))}
+            </select>
+          </label>
+        )}
+        {stats?.partitions && (
+          <label className="scope" title={T.scopeHint}>
+            {T.scope}
+            <select value={scope} onChange={(e) => go({ q, all, scope: Number(e.target.value) })}>
+              <option value={0}>{T.scopeAll}</option>
+              <option value={1}>{T.scopeBest}</option>
+              <option value={2}>{T.scopeBest2}</option>
+            </select>
+          </label>
+        )}
       </form>
 
       {error && <ErrorNote error={error} />}
@@ -86,7 +114,7 @@ export default function SearchPage() {
           <ul className="examples">
             {T.examplesList.map((example) => (
               <li key={example}>
-                <button type="button" lang="ar" dir="rtl" onClick={() => go({ q: example, all })}>
+                <button type="button" lang="ar" dir="rtl" onClick={() => go({ q: example, all, scope })}>
                   {example}
                 </button>
               </li>
@@ -97,12 +125,24 @@ export default function SearchPage() {
       )}
 
       {data && (
-        <section aria-live="polite" aria-busy={loading} className={`search-results${loading ? " is-loading" : ""}`}>
-          <Reading data={data} onPick={(term) => go({ q: term, all })} />
+        <section aria-live="polite" className={loading ? "is-loading" : ""}>
+          <Reading data={data} onPick={(term) => go({ q: term, all, scope })} />
 
           {data.results.length > 0 && (
             <>
-              <p className="count">{T.resultCount(data.results.length, data.total)}</p>
+              <p className="count">
+                <span>{T.resultCount(data.results.length, data.total)}</span>
+                {stats && (
+                  <span className="scan" title={T.scopeHint}>
+                    {data.routing
+                      ? data.routing.fallback
+                        ? T.searchedEverything
+                        : T.searchedGroups(data.routing.groups)
+                      : null}{" "}
+                    {T.scoredInfo(data.scored, stats.documents, data.took_ms)}
+                  </span>
+                )}
+              </p>
               <ol className="results">
                 {data.results.map((r) => (
                   <li key={r.doc_id} className="result">
@@ -124,6 +164,8 @@ export default function SearchPage() {
                         </span>
                       )}
                       {r.date && <span>{formatDate(r.date)}</span>}
+                      {r.category && <span className="group-tag" lang="ar" dir="rtl">{categories.find((c) => c.name === r.category)?.name_ar || r.category}</span>}
+                      {r.group !== null && r.group !== undefined && <span className="group-tag">{T.group(r.group + 1)}</span>}
                     </div>
                     <div className="score" title={`${T.score}: ${r.score.toFixed(3)}`}>
                       <span className="bar" aria-hidden="true">
@@ -135,7 +177,7 @@ export default function SearchPage() {
                 ))}
               </ol>
               {data.total > data.results.length && (
-                <button className="more" onClick={() => go({ q, all, k: k + PAGE })}>
+                <button className="more" onClick={() => go({ q, all, scope, k: k + PAGE })}>
                   {T.moreResults}
                 </button>
               )}
@@ -150,7 +192,7 @@ export default function SearchPage() {
           )}
         </section>
       )}
-    </div>
+    </>
   );
 }
 

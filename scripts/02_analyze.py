@@ -13,6 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import config  # noqa: E402
+from src.extraction.cleaner import strip_panel_names  # noqa: E402
 from src.morphology.analyzer import analyzer_from_config  # noqa: E402
 
 MODES = ("word", "light", "root")
@@ -27,7 +28,7 @@ def main() -> None:
     rows, main_terms = [], None
     for mode in MODES:
         analyzer = analyzer_from_config(config, mode)
-        terms = {str(d["doc_id"]): analyzer.analyze(d["body"]) for d in docs}
+        terms = {str(d["doc_id"]): analyzer.analyze(strip_panel_names(d["body"])) for d in docs}
         df = Counter(t for ts in terms.values() for t in set(ts))
         total = sum(len(ts) for ts in terms.values())
         rows.append({"mode": mode, "tokens": total, "vocabulary": len(df),

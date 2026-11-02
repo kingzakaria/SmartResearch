@@ -4,6 +4,7 @@ Run from the project root:   python -m uvicorn app.api:app --reload --port 8000
 Interactive documentation:   http://localhost:8000/docs
 """
 import sys
+import threading
 from dataclasses import asdict
 from pathlib import Path
 
@@ -12,6 +13,7 @@ sys.path.insert(0, str(ROOT))
 
 from fastapi import FastAPI, HTTPException, Query  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from pydantic import BaseModel, Field  # noqa: E402
 
 import config  # noqa: E402
 from src.search.engine import SearchEngine  # noqa: E402
@@ -21,24 +23,45 @@ from src.similarity import measures  # noqa: E402
 MAX_K = 50
 
 
-def create_app(engine: SearchEngine | None = None) -> FastAPI:
+class ClassifyRequest(BaseModel):
+    text: str = Field(max_length=20000)
+
+
+def create_app(engine: SearchEngine | None = None, classifier=None) -> FastAPI:
     """`engine` can be injected (tests); otherwise it is loaded from models/index.pkl on first use."""
     app = FastAPI(title="Arabic court decisions search", version="1.0")
     app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-                       allow_methods=["GET"], allow_headers=["*"])
-    state = {"engine": engine}
+                       allow_methods=["GET", "POST"], allow_headers=["*"])
+    state = {"engine": engine, "classifier": classifier, "classifier_tried": classifier is not None}
+    lock = threading.Lock()           # the first requests arrive together: load each model only once, and wait for it
 
     def get_engine() -> SearchEngine:
-        if state["engine"] is None:
-            try:
-                state["engine"] = SearchEngine.from_config(config)
-            except FileNotFoundError as error:
-                raise HTTPException(503, "Index not found. Run: python scripts/01_extract.py, "
-                                         "python scripts/02_analyze.py, python scripts/03_build_index.py "
-                                         f"({error.filename})")
-            except ValueError as error:
-                raise HTTPException(503, str(error))
-        return state["engine"]
+        with lock:
+            if state["engine"] is None:
+                try:
+                    state["engine"] = SearchEngine.from_config(config)
+                except FileNotFoundError as error:
+                    raise HTTPException(503, "Index not found. Run: python scripts/01_extract.py, "
+                                             "python scripts/02_analyze.py, python scripts/03_build_index.py "
+                                             f"({error.filename})")
+                except ValueError as error:
+                    raise HTTPException(503, str(error))
+            return state["engine"]
+
+    def get_classifier():
+        """Loaded on first use; None when models/classifier.pkl does not exist (or scikit-learn is not installed)."""
+        analyzer = get_engine().analyzer
+        with lock:
+            if not state["classifier_tried"]:
+                try:
+                    from src.classification.service import Classifier
+                    state["classifier"] = Classifier.from_config(config, analyzer)
+                except (FileNotFoundError, ImportError):
+                    state["classifier"] = None
+                except ValueError as error:
+                    raise HTTPException(503, str(error))
+                state["classifier_tried"] = True          # only after the loading is finished
+            return state["classifier"]
 
     @app.get("/api/health")
     def health():
@@ -51,11 +74,48 @@ def create_app(engine: SearchEngine | None = None) -> FastAPI:
         years = sorted({d["year"] for d in engine.documents.values() if d.get("year")})
         return {"documents": engine.index.n_docs, "terms": len(engine.index.postings),
                 "mode": engine.analyzer.mode, "years": years,
+                "partitions": None if engine.partitions is None else
+                {"k": engine.partitions.k, "sizes": engine.partitions.sizes},
+                "classifier": get_classifier() is not None,
                 "measures": sorted(measures.MEASURES)}
 
+    @app.get("/api/categories")
+    def categories():
+        """The categories (from the subject lines) with their Arabic name and number of decisions."""
+        engine = get_engine()
+        counts: dict[str, int] = {}
+        for category in engine.categories.values():
+            counts[category] = counts.get(category, 0) + 1
+        return {"categories": [{"name": name, "name_ar": engine.category_names.get(name, name), "count": count}
+                               for name, count in sorted(counts.items(), key=lambda kv: -kv[1])]}
+
+    @app.post("/api/classify")
+    def classify(request: ClassifyRequest):
+        """Predict the category of a pasted text, with a probability for every category."""
+        classifier = get_classifier()
+        if classifier is None:
+            raise HTTPException(503, "No classifier yet. Run: python scripts/10_label_by_subject.py, "
+                                     "then python scripts/11_train_classifiers.py")
+        engine = get_engine()
+        predictions = classifier.predict(request.text)
+        return {"predictions": [{"name": c, "name_ar": engine.category_names.get(c, c), "probability": round(p, 4)}
+                                for c, p in predictions]}
+
+    @app.get("/api/partitions")
+    def partitions():
+        """The groups the collection was divided in: size and main terms of each."""
+        p = get_engine().partitions
+        if p is None:
+            return {"k": 0, "groups": []}
+        return {"k": p.k, "groups": [{"group": i, "size": p.sizes[i], "top_terms": p.top_terms[i][:10]}
+                                     for i in range(p.k)]}
+
     @app.get("/api/search")
-    def search(q: str = Query("", max_length=500), k: int = Query(10, ge=1, le=MAX_K), all: bool = False):
-        response = get_engine().search(q, k=k, require_all=all)
+    def search(q: str = Query("", max_length=500), k: int = Query(10, ge=1, le=MAX_K), all: bool = False,
+               n_probe: int = Query(0, ge=0, le=20, description="0 = search everything; n = only the n best groups"),
+               category: str = Query("", max_length=60)):
+        response = get_engine().search(q, k=k, require_all=all, n_probe=n_probe or None,
+                                           category=category or None)
         data = asdict(response)
         data["suggestions"] = {t: [{"term": s, "distance": d} for s, d in found]
                                for t, found in response.suggestions.items()}
@@ -76,6 +136,8 @@ def create_app(engine: SearchEngine | None = None) -> FastAPI:
             "subject_segments": segment_text(subject, subject_spans),
             "doc_id": doc_id, "filename": doc.get("filename"), "decision_no": doc.get("decision_no"),
             "date": doc.get("date"), "case_no": doc.get("case_no"), "subject": doc.get("subject"),
+            "category": engine.categories.get(doc_id),
+            "category_ar": engine.category_names.get(engine.categories.get(doc_id) or "", None),
             "n_words": doc.get("n_words"), "terms": terms, "matches": len(spans) + len(subject_spans),
             "body": segment_text(text, spans), "closing": doc.get("closing") or "",
         }

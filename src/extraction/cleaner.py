@@ -63,3 +63,31 @@ def split_closing(text: str) -> tuple[str, str]:
     if closing.count("\n") + 1 > CLOSING_MAX_LINES:
         return text, ""
     return text[:start].strip(), closing.strip()
+
+
+# ---------- names of the court members ----------
+# "وبعد تلاوة المستشار المقرر السيد <name> لتقريره والاستماع إلى ملاحظات المحامي العام السيد <name> الرامية إلى رفض الطلب"
+# The names identify the panel and the session, not the subject: left in, they would be "the most characteristic words" of a
+# group of decisions. They are removed from the text used for ANALYSIS only (the text shown to the reader is untouched);
+# the useful words around them ("الرامية إلى رفض الطلب") stay.
+_NAME = r"(?:[ء-ي]+[\s،,]+){0,5}?[ء-ي]+"
+_AFTER_RAPPORTEUR = r"(?=\s+(?:لتقريره|وتقديم|وبعد|والاستماع|ولملاحظات|وبمحضر|وبمساعدة|الذي)\b)"
+_PANEL_PATTERNS = [
+    # rapporteur: "المستشار المقرر السيد X لتقريره"  /  "... السيد X وتقديم المحامي العام"
+    (re.compile(r"(المستشار(?:ة)?\s+المقرر(?:ة)?\s+)(?:السيد(?:ة)?\s+)" + _NAME + _AFTER_RAPPORTEUR), r"\1"),
+    # advocate general: "المحامي العام السيد X الرامية ... / وبمساعدة ..."
+    (re.compile(r"(المحامي(?:ة)?\s+العام(?:ة)?\s+)(?:السيد(?:ة)?\s+)" + _NAME +
+                r"(?=\s+(?:الرامية|الرامي|الهادفة|الذي|التي|وبمساعدة|وبحضور|وبعد|ولملاحظات|ملاحظاته|ملتمسه|ملتمساته|مستنتجاته)\b)"), r"\1"),
+    # clerk: "وبمساعدة كاتبة الضبط السيدة X."
+    (re.compile(r"(وبمساعدة\s+كاتب(?:ة)?\s+الضبط\s+)(?:السيد(?:ة)?\s+)?" + _NAME + r"(?=\s*(?:[.،]|$))"), r"\1"),
+    # composition: "<name> رئيسا والمستشارين السادة[:] X ،مقررا، Y ... أعضاء"
+    (re.compile(r"(?:[ء-ي]+[\s،,]+){0,4}?رئيسا\s+(?:و\s*)?المستشار(?:ين|ات)\s+(?:السادة|السيدات)\s*:?\s*"
+                r"(?:[ء-ي]+[\s،,]+){1,25}?[أا]عضاء"), ""),
+]
+
+
+def strip_panel_names(text: str) -> str:
+    """The text without the names of the panel members, prosecutor and clerk (for indexing and clustering)."""
+    for pattern, replacement in _PANEL_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return re.sub(r"[ \t]{2,}", " ", text)
