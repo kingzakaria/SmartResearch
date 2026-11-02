@@ -1,121 +1,420 @@
-# Arabic Legal Decisions Search
+# Arabic court decisions: search, classification and web interface
 
-A reproducible, offline-first text-mining project for Arabic legal decisions. It
-includes Arabic document extraction and analysis, a web-based search interface,
-TF-IDF/BM25 retrieval, decision similarity, clustering, supervised
-classification, a retrieval-augmented generation (RAG) pipeline, and evaluation
-utilities. The web interface is in Arabic and uses a right-to-left layout.
+A text-mining project (Introduction to Text Mining course) built on **358 usable decisions of the Moroccan Court of
+Cassation (real-estate chamber)**, written in Arabic. It covers the whole chain taught in the course:
+extraction, morphological analysis, inverted index and TF-IDF, similarity and distance measures, a search engine,
+clustering, classification with cross-validation, and a React interface.
 
-## Requirements
+The formulas of the course (TF, IDF with log base 10, cosine, Jaccard, Dice, Euclidean, Manhattan, Levenshtein, chi-square)
+are **written by hand** in the project, not taken from a library. scikit-learn is used only for the classifiers.
 
-- Python 3.10 or later
-- Node.js and npm (for the React web interface)
+> **Status.** Done: extraction, morphology, index, search, partitioned search, duplicates, clustering, classification,
+> API and interface. **Not done yet:** the search evaluation (precision@k, MAP) and the RAG part with an LLM
+> (see [Roadmap](#roadmap)).
 
-## Set up the Python environment
+---
 
-From the repository root:
-```powershell
-py -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+## Contents
+
+1. [What the application does](#what-the-application-does)
+2. [Architecture](#architecture)
+3. [Data](#data)
+4. [Project structure](#project-structure)
+5. [Installation (Windows)](#installation-windows)
+6. [Running the pipeline](#running-the-pipeline)
+7. [Running the application](#running-the-application)
+8. [How each part works](#how-each-part-works)
+9. [Results](#results)
+10. [What we found and changed along the way](#what-we-found-and-changed-along-the-way)
+11. [Tests](#tests)
+12. [Limitations](#limitations)
+13. [Roadmap](#roadmap)
+
+---
+
+## What the application does
+
+| Capability | Description |
+|---|---|
+| **Search** | TF-IDF ranking with cosine similarity over an inverted index. A query is analysed with the same morphology as the documents, so `الشفعة`, `بالشفعة` and `شفعة` find the same decisions. Results show the matched words highlighted in the original text. |
+| **Spelling help** | A word that is not in the corpus gets "did you mean" suggestions (Levenshtein distance). |
+| **Similar decisions** | For any decision, the closest decisions with a choice of measure: cosine, Dice, Jaccard, Euclidean, Manhattan. |
+| **Partitioned search** | The collection is divided into 3 groups with K-Means; a query can search only the best group(s): faster, with a measured loss of accuracy. |
+| **Category filter** | Each decision has one of 5 categories (derived from its subject line); the search can be restricted to a category. |
+| **Text classification** | Paste the reasoning of a decision and get the probability of each category. |
+| **Web interface** | React single-page application in front of a FastAPI backend. Arabic text is rendered right-to-left in a Naskh typeface. |
+
+## Architecture
+
+```
+                    data/raw/*.txt  (358 usable decisions, Arabic)
+                              |
+        [1] EXTRACTION   clean text, header metadata (decision no., date, case no., subject), body
+                              |           documents.json
+        [2] MORPHOLOGY   normalise -> tokenise -> stopwords -> stem        terms.json
+                              |
+        [3] INDEXING     inverted index {term -> {doc: count}} + TF-IDF     models/index.pkl
+                              |
+          +-------------------+---------------------------+
+          |                                               |
+ [4] SEARCH ENGINE                          [5] ANALYSIS OF THE COLLECTION
+   query -> same analyse()                     duplicates / template families
+   -> candidates -> cosine -> top k            vocabulary zones (frequent / kept / rare)
+   highlight, suggestions, similar docs        K-Means -> 3 partitions (+ partitioned search)
+          |                                    labels from subject lines -> classification
+          |                                               |
+          +-------------------+---------------------------+
+                              |
+                 [6] FastAPI (app/api.py)   ->   [7] React interface (frontend/)
 ```
 
-The Python requirements include the FastAPI service used by the web interface.
+Rule that holds everywhere: **documents and queries go through the same `analyze()`**. The keyword side uses stemmed
+text; the text shown to the reader is never altered.
 
-## Prepare the decision index
+## Data
 
-Put UTF-8 `.txt` decisions in `data/raw/real_estate_chamber/`. The project does
-not include private case files. Keep source files unchanged; extracted and
-processed data are written to `data/processed/`, and the search index is written
-to `models/`.
+* 365 `.txt` files, each one decision converted from PDF; 7 are empty, leaving **358 usable decisions**.
+* The data is **not in this repository** (real court decisions). Put the files in
+  `data/raw/real_estate_chamber/` to rebuild everything.
+* PDF conversion left artefacts (scrambled lines, a Persian *yeh* in some files, headers in several formats). They are
+  handled by the extraction step (metadata found in 99.7% of the files).
 
-Run the indexing steps from the repository root:
-```powershell
-python scripts/00_data_check.py
-python scripts/01_extract.py
-python scripts/02_analyze.py
-python scripts/03_build_index.py
+## Project structure
+
+```
+app/                     FastAPI backend (api.py)
+config.py                every path and parameter of the project
+data/
+  raw/                   the decisions (not in the repository)
+  processed/             generated: documents.json, terms.json, duplicates.json, labels.csv
+  resources/             stopwords_ar.txt, stopwords_legal.txt, category_rules.json
+frontend/                React (Vite) interface
+models/                  generated: index.pkl, partitions.json, classifier.pkl
+reports/                 generated: CSV reports of the scripts
+scripts/                 numbered scripts, run in order (see below)
+src/
+  extraction/            loader, cleaner (+ panel names removal), metadata parser
+  morphology/            normalizer, tokenizer, stopwords, stemmer, isri (vendored), analyzer
+  indexing/              inverted_index, tfidf, vocabulary (three zones)
+  similarity/            measures (cosine, Jaccard, Dice, Euclidean, Manhattan), levenshtein
+  search/                engine, highlight, partitions (partitioned search)
+  clustering/            kmeans (by hand), partitioning
+  analysis/              duplicates, labels (chi-square, purity, ARI), categories (rules on subject lines)
+  classification/        dataset (leak-free), evaluate (pipelines, cross-validation), service
+tests/                   132 automated tests
 ```
 
-The API loads `models/index.pkl` when it first needs the index. Build the index
-before starting the web interface if that file is not already present.
+## Installation (Windows)
 
-## Run the web interface
+Requirements: Python 3.12 or newer (developed on 3.14), Node.js 18 or newer.
 
-Start the API in one terminal:
 ```powershell
-.\.venv\Scripts\Activate.ps1
+cd C:\Users\hp\Documents\GitHub\SmartResearch
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+
+cd frontend
+npm install
+cd ..
+```
+
+Put the decisions in `data\raw\real_estate_chamber\`, then run the pipeline below.
+
+## Running the pipeline
+
+Run from the project root with the virtual environment active. Each script reads the output of the previous ones.
+
+| # | Command | What it does | Produces |
+|---|---|---|---|
+| 1 | `python scripts/01_extract.py` | Cleans the text, parses the header, cuts the closing formula | `data/processed/documents.json` |
+| 2 | `python scripts/02_analyze.py` | Morphological analysis; compares the word / light / root modes | `terms.json`, `reports/mode_comparison.csv` |
+| 3 | `python scripts/03_build_index.py` | Inverted index and TF-IDF | `models/index.pkl` |
+| 4 | `python scripts/04_search_cli.py "الشفعة"` | Search from the command line (`-k`, `--all`, `--similar ID`, `--measure`) | console |
+| 5 | `python scripts/05_find_duplicates.py` | Duplicates and template families | `duplicates.json`, `reports/duplicates.csv` |
+| 6 | `python scripts/06_vocabulary_zones.py` | Frequent / kept / rare vocabulary | `reports/vocabulary_zones.csv` |
+| 7 | `python scripts/07_build_partitions.py` | K-Means into 3 groups (`--explore` compares k = 2..8) | `models/partitions.json`, `reports/partitions.csv` |
+| 8 | `python scripts/08_compare_partitioned.py` | Full search against partitioned search | `reports/partition_comparison.csv` |
+| 9 | `python scripts/09_check_prefix_labels.py` | Checks whether the decision-number prefix is a category (it is not) | console |
+| 10 | `python scripts/10_label_by_subject.py` | Category of each decision from its subject line | `data/processed/labels.csv` |
+| 11 | `python scripts/11_train_classifiers.py` | Compares 5 classifiers with cross-validation, saves the best | `models/classifier.pkl`, `reports/classification_results.csv`, `reports/confusion_matrix.csv` |
+
+Minimal order to get the full application: **1, 2, 3, 5, 7, 10, 11**.
+Changing the stopwords, the cleaning or the category rules means re-running the scripts from that point on.
+
+Helper scripts: `demo_morphology.py` (shows each step of the analysis on a sentence), `inspect_formulas.py`
+(reproduces the worked examples of the course), `02_inspect_failures.py` (headers the parser could not read).
+
+## Running the application
+
+Two terminals, both from the project folder.
+
+```powershell
+# terminal 1: the API
+.venv\Scripts\activate
 python -m uvicorn app.api:app --reload --port 8000
 ```
 
-In a second terminal, install the frontend dependencies and start the React app:
 ```powershell
+# terminal 2: the interface
 cd frontend
-npm ci
 npm run dev
 ```
 
-Open the local address printed by Vite (by default
-`http://localhost:5173`). During development, Vite forwards `/api` requests to
-the API on port 8000. The API's interactive documentation is available at
-`http://localhost:8000/docs`.
+Open <http://localhost:5173>. The interactive API documentation is at <http://localhost:8000/docs>.
 
-The interface supports Arabic query search, optional matching of all query
-words, suggested terms, paginated results, highlighted snippets, and full
-decision text with similar-decision links. Similarity can be explored using
-cosine, Dice, Jaccard, Euclidean, and Manhattan measures.
+The API degrades gracefully: without `partitions.json` the group search is hidden, without `labels.csv` there is no
+category filter, without `classifier.pkl` the classify page explains which script to run.
 
-## Run the pipeline
+### API endpoints
 
-After preparing the index, run other pipeline steps from the repository root
-as needed:
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/health`, `GET /api/stats` | Size of the collection, mode, availability of partitions and classifier |
+| `GET /api/search?q=&k=&all=&n_probe=&category=` | Search. `all=true` requires every word; `n_probe=1` searches only the best group; `category=` filters |
+| `GET /api/documents/{id}?q=` | Metadata, subject, text with the matched words marked, closing formula, category |
+| `GET /api/documents/{id}/similar?k=&measure=` | Similar decisions |
+| `GET /api/partitions` | The groups: size and main terms |
+| `GET /api/categories` | Categories with their Arabic name and number of decisions |
+| `POST /api/classify` | `{ "text": "..." }` returns a probability for each category |
 
-```powershell
-python scripts/04_search_cli.py
-python scripts/05_cluster.py
-python scripts/06_label.py
-python scripts/07_train_classifier.py
-python scripts/08_build_rag.py
-python scripts/09_run_evaluation.py
+## How each part works
+
+### 1. Extraction and cleaning (`src/extraction`)
+
+* `clean_text`: unifies line breaks, removes invisible characters, converts Arabic-Indic and Persian digits and the Persian
+  *yeh*, drops letterhead lines (`المملكة المغربية`, `محكمة النقض`...).
+* `parse_document`: finds the decision number, date, case number and **subject line** in the header, in all the formats
+  met in the corpus (including typos such as `رتم` for `رقم`).
+* `split_closing`: cuts the closing formula (`وبه صدر القرار وتلي...`, with the names of the judges and the clerk) from the
+  body.
+* `strip_panel_names`: removes the names of the rapporteur, the advocate general, the clerk and the panel from the text used
+  for analysis (the reader still sees the original text).
+
+### 2. Morphology (`src/morphology`)
+
+`normalize -> tokenize -> stopwords -> stem -> drop boilerplate stems`
+
+* **Normalisation**: diacritics and tatweel removed; alef, yeh, teh marbuta forms unified.
+* **Tokenisation**: Arabic letters or digits; numbers kept only if they have 2 or 3 digits.
+* **Stopwords** from two external files: generic Arabic words and the legal boilerplate of the decisions
+  (المحكمة, الطاعن, ...), plus the month names. A word is removed when its surface form **or its stem** is listed.
+* **Stemming**, three modes compared by `02_analyze.py`:
+  * `word`: no stemming;
+  * `light` (default): hand-written rules, removes the article and clitic prefixes (`وال بال كال فال لل ال`, `و ب ل` when
+    safe) and the suffixes (`ها هم ان ات ون ين يه ه ي`), with minimum lengths and a list of protected words
+    (`قانون`, `عنوان`...);
+  * `root`: ISRI root extraction (vendored copy of the algorithm of NLTK's `ISRIStemmer`, Apache-2.0, so that the project does
+    not depend on NLTK, which does not run on Python 3.14).
+
+### 3. Inverted index and TF-IDF (`src/indexing`)
+
+```
+TF(i,j)  = w(i,j) / |d_j|             IDF(i) = log10( |D| / df(i) )          weight = TF x IDF
 ```
 
-Clustering needs at least two documents, and classifier training needs at least
-two labeled classes. Edit `data/eval/queries.json` to add relevant document IDs
-before interpreting search scores. The RAG questions in
-`data/eval/questions.json` are editable examples.
+* The index stores `term -> {document: occurrences}`, the length of each document and the document frequency.
+* Vectors are sparse dictionaries. Log base 10 is required to reproduce the worked example of the course
+  (there is a test for it).
+* A term present in every decision has IDF 0 and therefore no weight (8 such terms).
 
-## Optional Streamlit app
+### 4. Similarity and distances (`src/similarity`)
 
-The repository also includes a Streamlit interface. Install Streamlit
-separately, then launch it from the repository root:
+| Measure | Formula | Type |
+|---|---|---|
+| Cosine | `q.d / (‖q‖ ‖d‖)` | similarity on vectors (used for ranking) |
+| Jaccard | `‖A ∩ B‖ / ‖A ∪ B‖` | similarity on sets |
+| Dice | `2‖A ∩ B‖ / (‖A‖ + ‖B‖)` | similarity on sets |
+| Euclidean | `sqrt(sum (q_i - d_i)^2)` | distance |
+| Manhattan | `sum ‖q_i - d_i‖` | distance |
+| Levenshtein | minimum insertions, deletions, substitutions | distance on words (spelling suggestions) |
+
+### 5. Search engine (`src/search`)
+
+`query -> analyze() -> terms in the index? -> candidate documents (those sharing a term) -> TF-IDF vector of the query ->
+cosine -> sort -> top k`. Options: AND mode, "did you mean", the list of words ignored because they appear in every
+decision, highlighted snippets built on the **original** words of the text.
+
+### 6. Duplicates and template families (`src/analysis/duplicates.py`)
+
+Two decisions are compared by the Jaccard similarity of their term sets.
+
+* **Duplicate** = the same decision published twice: same case number and similarity of at least 0.8 (or a nearly identical
+  text, 0.97). One copy is set aside: **31 duplicates, 327 decisions remain**.
+* **Template family** = different decisions that follow the same template (for example the decisions 2/67 to 2/71, with
+  consecutive case numbers). They are kept, but cross-validation never separates a family: **3 families**, the largest with
+  9 decisions.
+
+### 7. The three zones of the vocabulary (`src/indexing/vocabulary.py`)
+
+Zipf's law and Luhn's cut-offs: the terms are sorted by the number of decisions containing them.
+
+| Zone | Rule | Content |
+|---|---|---|
+| frequent | in more than 80% of the decisions (50% for clustering and classification) | boilerplate that cannot tell decisions apart |
+| kept | in between | the words that carry the topic |
+| rare | in fewer than 2 decisions | names, numbers, conversion errors |
+
+On the corpus the rare zone holds 41% of the distinct terms but only 2.4% of the occurrences. For **search** only the
+frequent end is cut (a rare word, such as a party name, is exactly what a user may look for); for **clustering and
+classification** both ends are cut.
+
+### 8. K-Means and partitioned search (`src/clustering`, `src/search/partitions.py`)
+
+* K-Means written by hand (spherical: the similarity is the cosine), k-means++ initialisation, 10 restarts, empty clusters
+  restarted. Features: TF-IDF on the cleaned vocabulary of the 327 non-duplicate decisions. The 31 duplicates join the group
+  of their twin.
+* **Partitioned search**: the query is compared with the 3 centroids; only the `n_probe` closest groups are searched, each
+  with its own inverted index. Documents are scored with the same TF-IDF model as the full search, so a decision has the
+  same score in both modes; only the set of documents looked at changes. If no query word belongs to the clustering
+  vocabulary, every group is searched.
+* The groups correspond to topics: land registration, eviction and possession, and pre-emption, partition, sale and
+  reopening of judgments.
+
+### 9. Categories and classification (`src/analysis/categories.py`, `src/classification`)
+
+**Labels.** Each decision gets a category from its **subject line** with keyword rules (`data/resources/category_rules.json`,
+first match wins, the part of the subject before the first dash is tried first, matching is done on stems). Five
+categories:
+
+| Category | Arabic name | Decisions |
+|---|---|---|
+| registration | التحفيظ العقاري | 117 |
+| procedure | المسطرة والطعون وتنظيم المحاكم | 75 |
+| property_contracts | الملكية والعقود والاستحقاق | 56 |
+| eviction | الإفراغ والكراء والحيازة | 34 |
+| preemption_partition | الشفعة والقسمة والشياع | 33 |
+
+Twelve decisions without a usable subject stay "other" and are not used for training.
+
+**Why the subject and not the clusters.** The subject is written by a human and names the topic, and the classifier only sees
+the reasoning, so it cannot read its own label. Labelling by the K-Means groups would be circular (the same text features
+would produce both the label and the prediction).
+
+**No leakage.** The text given to the classifier is the body **without the subject lines** that open it, without the panel
+names and without bare numbers. `scripts/11_train_classifiers.py` measures the leak (subject still present in the text):
+**1.0%**.
+
+**Evaluation.** 5-fold cross-validation, repeated 3 times with different splits, **stratified** (each fold has every category)
+and **grouped** (a duplicate or a template family is never split between training and test). Frequency thresholding and the
+chi-square selection are fitted inside each training fold. Models: Complement Naive Bayes, Rocchio (nearest centroid), KNN
+(cosine), logistic regression, linear SVM; each keeping 10%, 25% or 100% of the terms ranked by chi-square.
+
+### 10. Web interface (`frontend/`)
+
+React 18 + Vite, plain CSS, react-router. All interface text is in `src/strings.js`. The search state is kept in the URL
+(`?q=...&category=...&scope=...`), so the back button and shared links work. The header and the text of the decisions use
+the Amiri and Noto Naskh Arabic typefaces; the interface uses IBM Plex Sans Arabic.
+
+## Results
+
+### Collection
+
+| | |
+|---|---|
+| Files / usable decisions | 365 / 358 |
+| Decisions after removing duplicates | 327 |
+| Vocabulary (stems, light mode) | 9,896 terms (word mode: 17,971; root mode: 4,775) |
+| Average document length | 585 terms |
+| Postings (term, document pairs) | 114,542 |
+
+The light stemmer reduces the vocabulary by 44.9% compared with no stemming; the root mode by 73.4%.
+
+### Partitioned search against full search
+
+Measured by `08_compare_partitioned.py`, 313 queries (the subject line of each decision), top 10:
+
+| Groups searched | Top 10 kept | Top 1 kept | Documents scored | Time (full -> partitioned) |
+|---|---|---|---|---|
+| 1 of 3 | 70.2% | 85.3% | 36.4% | 0.77 ms -> 0.27 ms |
+| 2 of 3 | 89.7% | 95.2% | 66.7% | 0.64 ms -> 0.43 ms |
+| 3 of 3 | 100% | 100% | 100% | identical to the full search |
+
+The last row is a correctness check: searching every group reproduces the full search exactly. Absolute times are below a
+millisecond because the collection is small; the saving is expected to matter on a much larger collection.
+(Figures from the first run, before the panel names were removed: re-run the script for the current values.)
+
+K-Means quality is low, as usual on legal text where every decision shares the same wording: silhouette between 0.03 and
+0.05 for k = 2..8. The groups are readable topics, but their borders move when the vocabulary changes slightly
+(see [Limitations](#limitations)).
+
+### Classification
+
+315 decisions, 5 categories. Baseline (always the biggest category): **accuracy 37.1%, macro-F1 0.108**.
+
+Best model: **logistic regression, accuracy 78.8%, macro-F1 0.766** (about twice the baseline in accuracy). The other four
+models (Naive Bayes, Rocchio, KNN, linear SVM) are in `reports/classification_results.csv`; the spread across folds is
+about ±0.06, so the best models are statistically close.
+
+Per category, the weakest is **property_contracts (F1 0.66)**, and **procedure** has the lowest recall (0.67). Full
+tables: `reports/classification_results.csv` and `reports/confusion_matrix.csv`.
+
+Observations:
+
+* The chi-square selection and the upper frequency limit did **not** improve accuracy here. On a small collection they reduce
+  size and time, not error.
+* The most weighted words of each category make legal sense: eviction `افراغ, احتلال, سكن`; pre-emption/partition
+  `قسم, شياع, شفع, شركاء`; registration `متعرض, مطلب, كناش, محافظ, تقييد`; property/contracts `استحقاق, هبه, صدق, تعويض`.
+* The labels come from keyword rules on the subject line: the scores measure how well the text predicts **that labelling**,
+  not an absolute truth.
+
+## What we found and changed along the way
+
+The project did not go straight; these are the problems met and what was decided, since they explain the final design.
+
+| Finding | Decision |
+|---|---|
+| Headers came in many formats (case number without `رقم`, typos, subject before the title line, subject merged with the reasoning) | The metadata parser was rewritten: 99.7% coverage |
+| The closing formula and letterhead lines (with the names of the judges) polluted the text | Letterheads are dropped and the closing formula is cut from the body (355 of 358 found) |
+| NLTK 3.4.5 does not run on Python 3.14 | The ISRI root stemmer is vendored |
+| The boilerplate words (المحكمة, الطاعن...) were everywhere | External legal stopword list applied by surface and by stem; IDF 0 neutralises the rest. Words that are also topics (`بناء`, `القانون`) were deliberately not listed |
+| First duplicate rule (similarity >= 0.8) grouped decisions 2/67 to 2/71, which are different cases with the same template | Split into **duplicates** (same case number, dropped) and **template families** (kept, never split by cross-validation) |
+| "Is the first number of the decision number (1/2/3/4) a category?" | `09_check_prefix_labels.py`: the words linked to each prefix were judges' names, months and drafting phrases, not topics. **The prefix identifies the panel and session, not the subject**, so it is not used as a label |
+| Judges' names leaked into the vocabulary (and would have leaked into clustering) | Panel names are cut out of the analysed text by anchored patterns (`strip_panel_names`); month names added to the stopwords |
+| Clusters were first considered as labels | Rejected as circular; labels come from the subject lines instead |
+| A decision's body begins with its own subject line | The subject is stripped from the classification text, and a leak check measures what remains (1.0%) |
+| Some categories were too small to evaluate (below 20 decisions) | Pre-emption merged with partition; contracts merged with property |
+| First API version loaded the classifier lazily without a lock; two simultaneous first requests could get a 503 | A lock was added, with a test that fires concurrent requests |
+| A test assumed no trained model existed on the machine | The test now points explicitly to a missing file |
+
+## Tests
 
 ```powershell
-python -m pip install streamlit
-streamlit run app/streamlit_app.py
+pytest
 ```
 
-The answer generator is extractive by default and uses sentences retrieved
-from the corpus.
+132 tests, no data needed (they use small in-memory corpora): extraction and cleaning, header parsing, morphology, index and
+the numbers of the course, similarity measures, search engine, partitions and K-Means, duplicates and vocabulary zones,
+labels and chi-square, categories, classification (including the leak guards and the fold grouping) and the API.
+The API and classification tests are skipped automatically if FastAPI or scikit-learn is not installed.
 
-## Project layout
+## Limitations
 
-- `config.py`: paths and tunable pipeline defaults.
-- `app/api.py`: FastAPI endpoints for search, documents, statistics, and similar decisions.
-- `frontend/`: React/Vite Arabic RTL web interface.
-- `app/streamlit_app.py`: optional Streamlit interface.
-- `src/extraction/`, `src/morphology/`: source loading, metadata, Arabic text analysis.
-- `src/indexing/`, `src/search/`, `src/similarity/`: lexical retrieval and metrics.
-- `src/reduction/`, `src/clustering/`, `src/classification/`: course workflows.
-- `src/rag/`, `src/evaluation/`: chunk retrieval, grounded answers, evaluation.
-- `scripts/`: runnable pipeline entry points; `tests/`: focused regression tests.
+* **Small collection** (358 decisions): timings are tiny and the classification scores have a spread of about
+  ±0.06.
+* **Labels are rule-based.** Some subjects are matched by a generic keyword; the "procedure" and "property_contracts"
+  categories are the least coherent. About 4% of the decisions have no category.
+* **The K-Means groups are not stable**: their sizes changed between runs when the vocabulary changed slightly (silhouette
+  0.03 to 0.05). They are interpretable topics, not strict classes.
+* **Stemming is rule-based**: broken plurals (`الشفعاء`) get a different stem from the singular (`شفعة`) and need to be
+  listed explicitly where it matters (the category rules do this).
+* Searching for the **name of a judge** finds nothing, by design: those names are removed from the analysed text.
+* The classifier always picks one of its five categories: it has no "none of these" answer, and a text from another field
+  gets low probabilities rather than a refusal.
 
-Arabic stopword lists are plain UTF-8 files in `data/resources/`. The default
-stemmer is a conservative light stemmer implemented in this project; stemming
-can be disabled or switched to the optional NLTK ISRI stemmer. Metadata
-extraction is heuristic and should be checked against the source collection.
+## Roadmap
 
-Run the Python tests with:
+1. **Search evaluation**: 10 to 15 queries with their relevant decisions, precision@k and MAP, and a comparison of the
+   word / light / root modes.
+2. **Ranking improvements**: a boost for the subject line, or BM25; the decisions about "التشطيب" are ambiguous (striking a
+   case off the roll against striking a registration) and rank poorly.
+3. **RAG with an LLM**: split the decisions into chunks, multilingual embeddings, hybrid retrieval (BM25 + embeddings, merged
+   by reciprocal rank fusion), and an answer in Arabic that cites the decisions it uses.
+4. **Stability test of the clustering**: run K-Means with several seeds and measure the agreement between the runs; name the
+   groups in the interface.
 
-```powershell
-python -m pytest
-```
+## Credits
+
+* Course: *Introduction au Text Mining*.
+* ISRI stemmer: algorithm of the NLTK `ISRIStemmer` (Apache License 2.0), vendored in `src/morphology/isri.py`.
+* Typefaces (through `@fontsource`): Amiri, Noto Naskh Arabic, IBM Plex Sans Arabic.
