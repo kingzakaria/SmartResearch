@@ -3,14 +3,16 @@
 A text-mining project (Introduction to Text Mining course) built on **358 usable decisions of the Moroccan Court of
 Cassation (real-estate chamber)**, written in Arabic. It covers the whole chain taught in the course:
 extraction, morphological analysis, inverted index and TF-IDF, similarity and distance measures, a search engine,
-clustering, classification with cross-validation, and a React interface.
+clustering, classification with cross-validation, a React interface, and a question-answering page that combines
+retrieval and an LLM (RAG).
 
 The formulas of the course (TF, IDF with log base 10, cosine, Jaccard, Dice, Euclidean, Manhattan, Levenshtein, chi-square)
-are **written by hand** in the project, not taken from a library. scikit-learn is used only for the classifiers.
+are **written by hand** in the project, not taken from a library. scikit-learn is used only for the classifiers, and the
+Gemini API only for the embeddings and the generated answers of "Ask AI".
 
-> **Status.** Done: extraction, morphology, index, search, partitioned search, duplicates, clustering, classification,
-> API, interface and **"Ask AI" (RAG with Gemini)**. **Not done yet:** the search evaluation (precision@k, MAP)
-> (see [Roadmap](#roadmap)).
+> **Status.** Done and tested: extraction, morphology, index, search, partitioned search, duplicates, clustering,
+> classification, API, interface and **"Ask AI" (RAG with Gemini)**. **Not done yet:** the quantitative evaluation of the
+> search (precision@k, MAP) and of the RAG retrieval (recall@5) (see [Roadmap](#roadmap)).
 
 ---
 
@@ -27,8 +29,9 @@ are **written by hand** in the project, not taken from a library. scikit-learn i
 9. [Results](#results)
 10. [What we found and changed along the way](#what-we-found-and-changed-along-the-way)
 11. [Tests](#tests)
-12. [Limitations](#limitations)
-13. [Roadmap](#roadmap)
+12. [Troubleshooting](#troubleshooting)
+13. [Limitations](#limitations)
+14. [Roadmap](#roadmap)
 
 ---
 
@@ -67,6 +70,8 @@ are **written by hand** in the project, not taken from a library. scikit-learn i
           +-------------------+---------------------------+
                               |
                  [6] FastAPI (app/api.py)   ->   [7] React interface (frontend/)
+                              |
+        [8] ASK AI (RAG)  passages -> keyword + embedding retrieval -> fusion -> Gemini -> cited answer
 ```
 
 Rule that holds everywhere: **documents and queries go through the same `analyze()`**. The keyword side uses stemmed
@@ -75,8 +80,9 @@ text; the text shown to the reader is never altered.
 ## Data
 
 * 365 `.txt` files, each one decision converted from PDF; 7 are empty, leaving **358 usable decisions**.
-* The data is **not in this repository** (real court decisions). Put the files in
-  `data/raw/real_estate_chamber/` to rebuild everything.
+* The data is **not in this repository** (real court decisions, kept out by `.gitignore`). Put the files in
+  `data/raw/real_estate_chamber/` to rebuild everything. What the repository does contain in `data/` is
+  `data/resources/` (stopwords and category rules): these are part of the code.
 * PDF conversion left artefacts (scrambled lines, a Persian *yeh* in some files, headers in several formats). They are
   handled by the extraction step (metadata found in 99.7% of the files).
 
@@ -85,12 +91,13 @@ text; the text shown to the reader is never altered.
 ```
 app/                     FastAPI backend (api.py)
 config.py                every path and parameter of the project
+.env                     your Gemini key (never committed; you create it)
 data/
   raw/                   the decisions (not in the repository)
-  processed/             generated: documents.json, terms.json, duplicates.json, labels.csv
+  processed/             generated: documents.json, terms.json, duplicates.json, labels.csv, chunks.json
   resources/             stopwords_ar.txt, stopwords_legal.txt, category_rules.json
 frontend/                React (Vite) interface
-models/                  generated: index.pkl, partitions.json, classifier.pkl
+models/                  generated: index.pkl, partitions.json, classifier.pkl, chunk_embeddings.npz
 reports/                 generated: CSV reports of the scripts
 scripts/                 numbered scripts, run in order (see below)
 src/
@@ -102,7 +109,8 @@ src/
   clustering/            kmeans (by hand), partitioning
   analysis/              duplicates, labels (chi-square, purity, ARI), categories (rules on subject lines)
   classification/        dataset (leak-free), evaluate (pipelines, cross-validation), service
-tests/                   132 automated tests
+  rag/                   chunker, gemini (HTTP client), retriever (hybrid + fusion), answer (prompt, citations), store
+tests/                   153 automated tests
 ```
 
 ## Installation (Windows)
@@ -138,10 +146,10 @@ Run from the project root with the virtual environment active. Each script reads
 | 8 | `python scripts/08_compare_partitioned.py` | Full search against partitioned search | `reports/partition_comparison.csv` |
 | 9 | `python scripts/09_check_prefix_labels.py` | Checks whether the decision-number prefix is a category (it is not) | console |
 | 10 | `python scripts/10_label_by_subject.py` | Category of each decision from its subject line | `data/processed/labels.csv` |
+| 11 | `python scripts/11_train_classifiers.py` | Compares 5 classifiers with cross-validation, saves the best | `models/classifier.pkl`, `reports/classification_results.csv`, `reports/confusion_matrix.csv` |
 | 12 | `python scripts/12_build_chunks.py` | Cuts the decisions into passages of about 400 words (overlap 80), skips duplicates | `data/processed/chunks.json` |
 | 13 | `python scripts/13_embed_chunks.py` | One Gemini embedding per passage; resumable (needs the key) | `models/chunk_embeddings.npz` |
 | 14 | `python scripts/14_ask_cli.py "سؤال"` | Ask from the terminal (`--no-llm`: show only the retrieved passages) | console |
-| 11 | `python scripts/11_train_classifiers.py` | Compares 5 classifiers with cross-validation, saves the best | `models/classifier.pkl`, `reports/classification_results.csv`, `reports/confusion_matrix.csv` |
 
 Minimal order to get the full application: **1, 2, 3, 5, 7, 10, 11, 12, 13** (12 and 13 only for "Ask AI").
 Changing the stopwords, the cleaning or the category rules means re-running the scripts from that point on.
@@ -174,12 +182,29 @@ category filter, without `classifier.pkl` the classify page explains which scrip
 
 1. Create a free key in [Google AI Studio](https://aistudio.google.com/apikey).
 2. Create the file `.env` at the project root (next to `config.py`) containing one line: `GEMINI_API_KEY=your_key_here`
-3. Make sure `.env` is in `.gitignore`. **Never commit the key.**
-4. Run scripts 12 and 13, restart the API.
+   (PowerShell: `Set-Content -Path .env -Value "GEMINI_API_KEY=your_key_here" -Encoding ascii`).
+3. Make sure `.env` is in `.gitignore` (it is). **Never commit the key.**
+4. Run scripts 12 and 13, then start the API.
 
-The model names are in `config.py` (`GEMINI_LLM_MODEL`, `GEMINI_EMBED_MODEL`); change them there if Google renames or
-retires one. Free-tier limits (requests and tokens per minute) apply: script 13 pauses between requests, retries on
-"429" and saves its progress, so it can simply be run again.
+Settings in `config.py`:
+
+| Setting | Default | Role |
+|---|---|---|
+| `GEMINI_LLM_MODEL` | `gemini-flash-latest` | model that writes the answer (an alias that follows Google's current Flash model) |
+| `GEMINI_EMBED_MODEL` | `gemini-embedding-001` | model that embeds passages and questions |
+| `EMBED_DIM` | 768 | size of the embedding vectors |
+| `GEMINI_TIMEOUT` | 180 | seconds to wait for one answer |
+| `RAG_TOP_PASSAGES` / `RAG_MAX_PER_DOC` | 5 / 2 | passages given to the LLM / at most this many from one decision |
+
+Model names change. To list what your key can use:
+
+```powershell
+$key = (Get-Content .env | Select-String "GEMINI_API_KEY=").ToString().Split("=")[1]
+(Invoke-RestMethod "https://generativelanguage.googleapis.com/v1beta/models?key=$key&pageSize=100").models | Where-Object { $_.supportedGenerationMethods -contains "generateContent" } | Select-Object -ExpandProperty name
+```
+
+Free-tier limits apply (see [Troubleshooting](#troubleshooting)): script 13 pauses between requests, retries on network
+errors, "429" and "503", and saves its progress after every batch, so it can simply be run again.
 
 ### API endpoints
 
@@ -336,7 +361,10 @@ question -> [keyword retriever: TF-IDF cosine over passages] --\
 * **Fallback**: without embeddings, or if Gemini's embedding call fails, the answer uses keywords only (the interface says so).
 * **Why the Gemini API for embeddings and not a local model**: the local multilingual models need PyTorch, which is heavy
   and not always available for the newest Python on Windows; the API needs one `httpx` call and the same key as the LLM.
-* Each question is independent (no memory of previous turns).
+* **Interface**: citations such as [1] in the answer are links to the numbered passage below it; each passage links to the
+  full decision and says whether the answer cited it. Each question is independent (no memory of previous turns).
+* **Reliability of the client** (`gemini.py`): plain HTTPS with `httpx`; retries with growing pauses on dropped connections,
+  timeouts, "429" and "503"; a missing key, a missing `chunks.json` or an unknown model give a message that says what to do.
 
 ### 11. Web interface (`frontend/`)
 
@@ -376,6 +404,20 @@ K-Means quality is low, as usual on legal text where every decision shares the s
 0.05 for k = 2..8. The groups are readable topics, but their borders move when the vocabulary changes slightly
 (see [Limitations](#limitations)).
 
+### Ask AI (RAG)
+
+| | |
+|---|---|
+| Decisions used | 327 (the 31 duplicates are skipped, so the same text is never retrieved twice) |
+| Passages | 1,047 (1 to 12 per decision, median 3) |
+| Words per passage | median 380, maximum 400 |
+| Embeddings | 1,047 vectors of 768 dimensions |
+
+First test, the question "ما هي شروط الشفعة؟" (what are the conditions of pre-emption): retrieval was hybrid, the answer was
+written in Arabic with citations [1] to [5] that pointed to decisions 4/26, 2/50 and 2/52, and it covered the deposit of the
+price, the offer of the price and costs, the legal deadline, several pre-emptors and the party the action is brought against.
+This is a single check, not an evaluation; the measured comparison of the retrievers is in the [Roadmap](#roadmap).
+
 ### Classification
 
 315 decisions, 5 categories. Baseline (always the biggest category): **accuracy 37.1%, macro-F1 0.108**.
@@ -414,6 +456,10 @@ The project did not go straight; these are the problems met and what was decided
 | Some categories were too small to evaluate (below 20 decisions) | Pre-emption merged with partition; contracts merged with property |
 | First API version loaded the classifier lazily without a lock; two simultaneous first requests could get a 503 | A lock was added, with a test that fires concurrent requests |
 | A test assumed no trained model existed on the machine | The test now points explicitly to a missing file |
+| Local multilingual embedding models need PyTorch, heavy and not always available for the newest Python on Windows | Embeddings and answers come from the Gemini API through plain `httpx`; with no embeddings the system still works with keywords only |
+| The Gemini free tier allows 1,000 embedding requests per day and the connection dropped during the first long run | The embedding script is resumable, saves after every batch, uses small batches with pauses, and the client retries dropped connections and "429" / "503" |
+| `gemini-2.5-flash` was refused with "no longer available to new users", and another model answered "503 high demand" | The model is a setting; the default is the alias `gemini-flash-latest` and the README shows how to list the models available to a key |
+| A hard-to-spot mistake in `.gitignore`: `data/` ignored `data/resources/` too (stopwords, category rules), so a fresh clone could not run | The rule now ignores only `data/raw/` and the generated folders |
 
 ## Tests
 
@@ -421,10 +467,24 @@ The project did not go straight; these are the problems met and what was decided
 pytest
 ```
 
-152 tests, no data needed (they use small in-memory corpora): extraction and cleaning, header parsing, morphology, index and
+153 tests, no data needed (they use small in-memory corpora): extraction and cleaning, header parsing, morphology, index and
 the numbers of the course, similarity measures, search engine, partitions and K-Means, duplicates and vocabulary zones,
-labels and chi-square, categories, classification (including the leak guards and the fold grouping) and the API.
+labels and chi-square, categories, classification (including the leak guards and the fold grouping), the RAG (chunking,
+fusion, hybrid retrieval, prompt and citations, the Gemini client with a fake HTTP layer, no network needed) and the API.
 The API and classification tests are skipped automatically if FastAPI or scikit-learn is not installed.
+
+## Troubleshooting
+
+| Message or symptom | Cause and fix |
+|---|---|
+| `503 ... No Gemini API key` (API) | `.env` is missing or misplaced: it must be next to `config.py`; restart the API after creating it |
+| `503 ... No passages yet` | run `python scripts/12_build_chunks.py`, then `13_embed_chunks.py` |
+| `model ... is no longer available` / `not found` | change `GEMINI_LLM_MODEL` in `config.py` (see the list command above) |
+| `503 ... high demand` | Google's side, temporary: ask again, or use another model (for example `gemini-3.1-flash-lite`) |
+| `429` or "exceeded your current quota ... per day" while embedding | free-tier limit (1,000 embedding requests per day, a few hundred tokens per minute): wait, then run script 13 again, it continues |
+| `Cannot reach Gemini ... timed out` / `getaddrinfo failed` | network problem: run the script again; the timeout can be raised with `GEMINI_TIMEOUT` |
+| The answer says retrieval is "keywords only" | the embeddings file is missing, does not match `chunks.json` (run 12 then 13 again), or the embedding call failed; the interface shows the reason |
+| The search page shows no category filter or no group choice | `labels.csv` or `partitions.json` does not exist yet (scripts 10 and 7) |
 
 ## Limitations
 
@@ -438,7 +498,7 @@ The API and classification tests are skipped automatically if FastAPI or scikit-
   listed explicitly where it matters (the category rules do this).
 * Searching for the **name of a judge** finds nothing, by design: those names are removed from the analysed text.
 * **"Ask AI" can be wrong**: the LLM may misread a passage or cite one that does not support the claim; the citations exist so the
-  reader can check. It is not legal advice. The passages are sent to Google's API, so use it only with data you may share.
+  reader can check. It is not legal advice. The passages and the questions are sent to Google's API, so use it only with data you may share. The free tier has daily and per-minute limits.
 * The classifier always picks one of its five categories: it has no "none of these" answer, and a text from another field
   gets low probabilities rather than a refusal.
 
@@ -448,7 +508,7 @@ The API and classification tests are skipped automatically if FastAPI or scikit-
    word / light / root modes.
 2. **Ranking improvements**: a boost for the subject line, or BM25; the decisions about "التشطيب" are ambiguous (striking a
    case off the roll against striking a registration) and rank poorly.
-3. **RAG evaluation**: 10 to 15 questions with the decisions that should be retrieved (recall@5 for keywords only, embeddings only
+3. **RAG evaluation** (the next step to give the retrieval a number): 10 to 15 questions with the decisions that should be retrieved (recall@5 for keywords only, embeddings only
    and hybrid), and a check that every claim of an answer is supported by its cited passage. Memory of previous turns.
 4. **Stability test of the clustering**: run K-Means with several seeds and measure the agreement between the runs; name the
    groups in the interface.
