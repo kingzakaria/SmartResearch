@@ -168,3 +168,46 @@ def test_concurrent_first_requests_all_see_the_classifier():
         assert codes == [200] * 6
     finally:
         config.CLASSIFIER_PKL = original
+
+
+# ---------- Ask AI (RAG) ----------
+class _FakeRag:
+    def __init__(self, error=None):
+        self.error = error
+        self.retriever = type("R", (), {"hybrid": True})()
+
+    def ask(self, question):
+        if self.error:
+            raise self.error
+        return {"question": question, "answer": "جواب [1]", "retrieval": "hybrid", "warning": None,
+                "sources": [{"n": 1, "doc_id": "1", "cited": True}]}
+
+
+def _rag_client(rag):
+    analyzer = analyzer_from_config(config, "light")
+    index = InvertedIndex.build({d["doc_id"]: analyzer.analyze(d["body"]) for d in DOCS})
+    return TestClient(create_app(SearchEngine(analyzer, TfidfModel(index), DOCS), rag=rag))
+
+
+def test_ask_returns_answer_and_sources():
+    data = _rag_client(_FakeRag()).post("/api/ask", json={"question": "ما هي الشفعة؟"}).json()
+    assert data["answer"] == "جواب [1]" and data["sources"][0]["cited"] is True
+
+
+def test_ask_maps_gemini_errors():
+    from src.rag.gemini import GeminiError
+    assert _rag_client(_FakeRag(GeminiError("quota", 429))).post("/api/ask", json={"question": "سؤال"}).status_code == 429
+    assert _rag_client(_FakeRag(GeminiError("boom", 500))).post("/api/ask", json={"question": "سؤال"}).status_code == 502
+
+
+def test_ask_validates_the_question():
+    assert _rag_client(_FakeRag()).post("/api/ask", json={"question": "x"}).status_code == 422
+
+
+def test_ask_without_chunks_or_key_explains_what_to_do(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "CHUNKS_JSON", tmp_path / "missing.json")
+    monkeypatch.setattr(config, "ENV_FILE", tmp_path / "no.env")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    response = _rag_client(None).post("/api/ask", json={"question": "سؤال طويل"})
+    assert response.status_code == 503 and "12_build_chunks" in response.json()["detail"]
+    assert _rag_client(None).get("/api/stats").json()["rag"]["ready"] is False

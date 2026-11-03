@@ -1,0 +1,10 @@
+{
+  "comment": "Rules that give each decision a category from its SUBJECT line. The categories are tried in this order and the first match wins, so put specific categories before general ones. Keywords are plain Arabic words: they are reduced to stems like the rest of the project, so شفعة also matches الشفعاء. Edit freely, then run scripts/10_label_by_subject.py again.",
+  "categories": [
+    {"name": "preemption_partition", "name_ar": "الشفعة والقسمة والشياع", "keywords": ["شفعة", "شفعاء", "شفيع", "مشفوع", "قسمة", "شياع", "مشاع", "تركة"]},
+    {"name": "eviction", "name_ar": "الإفراغ والكراء والحيازة", "keywords": ["إفراغ", "طرد", "احتلال", "كراء", "كرائية", "حيازة", "حائز"]},
+    {"name": "registration", "name_ar": "التحفيظ العقاري", "keywords": ["تحفيظ", "تعرض", "متعرض", "تحديد", "مطلب", "رسم", "تقييد", "تشطيب", "إراثة", "محفظ"]},
+    {"name": "property_contracts", "name_ar": "الملكية والعقود والاستحقاق", "keywords": ["بيع", "عقد", "شراء", "فسخ", "إبطال", "وعد", "ثمن", "هبة", "واهب", "وصية", "صدقة", "مرض الموت", "تعويض", "ضرر", "استحقاق", "عقاري", "مرور", "ارتفاق", "سلالية", "ملكية"]},
+    {"name": "procedure", "name_ar": "المسطرة والطعون وتنظيم المحاكم", "keywords": ["نقض", "إعادة النظر", "استئناف", "مقال", "محاماة", "تبليغ", "أجل", "طعن", "خبرة", "اختصاص", "تشكيلة", "تشكيل", "دفوع", "إيقاف", "وسيلة", "وسائل", "تعليل", "المقضي", "قضائي", "قضائية", "تكييف", "الجنائي", "سلطة"]}
+  ]
+}

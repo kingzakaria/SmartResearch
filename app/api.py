@@ -27,12 +27,16 @@ class ClassifyRequest(BaseModel):
     text: str = Field(max_length=20000)
 
 
-def create_app(engine: SearchEngine | None = None, classifier=None) -> FastAPI:
+class AskRequest(BaseModel):
+    question: str = Field(min_length=2, max_length=1000)
+
+
+def create_app(engine: SearchEngine | None = None, classifier=None, rag=None) -> FastAPI:
     """`engine` can be injected (tests); otherwise it is loaded from models/index.pkl on first use."""
     app = FastAPI(title="Arabic court decisions search", version="1.0")
     app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
                        allow_methods=["GET", "POST"], allow_headers=["*"])
-    state = {"engine": engine, "classifier": classifier, "classifier_tried": classifier is not None}
+    state = {"engine": engine, "classifier": classifier, "classifier_tried": classifier is not None, "rag": rag}
     lock = threading.Lock()           # the first requests arrive together: load each model only once, and wait for it
 
     def get_engine() -> SearchEngine:
@@ -63,6 +67,24 @@ def create_app(engine: SearchEngine | None = None, classifier=None) -> FastAPI:
                 state["classifier_tried"] = True          # only after the loading is finished
             return state["classifier"]
 
+    def get_rag():
+        """The "Ask AI" service, loaded on first use. 503 with the command to run when something is missing."""
+        engine = get_engine()
+        with lock:
+            if state["rag"] is None:
+                from src.rag.store import build_service
+                try:
+                    state["rag"] = build_service(config, engine)
+                except FileNotFoundError:
+                    raise HTTPException(503, "No passages yet. Run: python scripts/12_build_chunks.py "
+                                             "then python scripts/13_embed_chunks.py")
+                except PermissionError:
+                    raise HTTPException(503, "No Gemini API key. Create the file .env at the project root "
+                                             "containing: GEMINI_API_KEY=your_key_here  then restart the API")
+                except ValueError as error:
+                    raise HTTPException(503, str(error))
+            return state["rag"]
+
     @app.get("/api/health")
     def health():
         engine = get_engine()
@@ -77,7 +99,28 @@ def create_app(engine: SearchEngine | None = None, classifier=None) -> FastAPI:
                 "partitions": None if engine.partitions is None else
                 {"k": engine.partitions.k, "sizes": engine.partitions.sizes},
                 "classifier": get_classifier() is not None,
+                "rag": rag_status(),
                 "measures": sorted(measures.MEASURES)}
+
+    def rag_status() -> dict:
+        if state["rag"] is not None:
+            return {"ready": True, "hybrid": state["rag"].retriever.hybrid}
+        from src.rag.store import rag_files_status
+        files = rag_files_status(config)
+        return {"ready": files["chunks"] and files["key"], "hybrid": files["chunks"] and files["embeddings"] and files["key"]}
+
+    @app.post("/api/ask")
+    def ask(request: AskRequest):
+        """Answer a question from the decisions: hybrid retrieval of passages, then Gemini writes the answer
+        and cites the passages it used."""
+        from src.rag.gemini import GeminiError
+        service = get_rag()
+        try:
+            return service.ask(request.question.strip())
+        except GeminiError as error:
+            if error.status == 429:
+                raise HTTPException(429, "Gemini free-tier limit reached. Wait a minute and ask again.")
+            raise HTTPException(502, f"Gemini error: {error}")
 
     @app.get("/api/categories")
     def categories():

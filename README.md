@@ -9,7 +9,7 @@ The formulas of the course (TF, IDF with log base 10, cosine, Jaccard, Dice, Euc
 are **written by hand** in the project, not taken from a library. scikit-learn is used only for the classifiers.
 
 > **Status.** Done: extraction, morphology, index, search, partitioned search, duplicates, clustering, classification,
-> API and interface. **Not done yet:** the search evaluation (precision@k, MAP) and the RAG part with an LLM
+> API, interface and **"Ask AI" (RAG with Gemini)**. **Not done yet:** the search evaluation (precision@k, MAP)
 > (see [Roadmap](#roadmap)).
 
 ---
@@ -42,6 +42,7 @@ are **written by hand** in the project, not taken from a library. scikit-learn i
 | **Partitioned search** | The collection is divided into 3 groups with K-Means; a query can search only the best group(s): faster, with a measured loss of accuracy. |
 | **Category filter** | Each decision has one of 5 categories (derived from its subject line); the search can be restricted to a category. |
 | **Text classification** | Paste the reasoning of a decision and get the probability of each category. |
+| **Ask AI** | A question in Arabic or English: hybrid retrieval (keywords + embeddings) finds passages of the decisions, Gemini writes the answer from those passages only and cites them as [1], [2]; every citation links to the decision. |
 | **Web interface** | React single-page application in front of a FastAPI backend. Arabic text is rendered right-to-left in a Naskh typeface. |
 
 ## Architecture
@@ -137,9 +138,12 @@ Run from the project root with the virtual environment active. Each script reads
 | 8 | `python scripts/08_compare_partitioned.py` | Full search against partitioned search | `reports/partition_comparison.csv` |
 | 9 | `python scripts/09_check_prefix_labels.py` | Checks whether the decision-number prefix is a category (it is not) | console |
 | 10 | `python scripts/10_label_by_subject.py` | Category of each decision from its subject line | `data/processed/labels.csv` |
+| 12 | `python scripts/12_build_chunks.py` | Cuts the decisions into passages of about 400 words (overlap 80), skips duplicates | `data/processed/chunks.json` |
+| 13 | `python scripts/13_embed_chunks.py` | One Gemini embedding per passage; resumable (needs the key) | `models/chunk_embeddings.npz` |
+| 14 | `python scripts/14_ask_cli.py "سؤال"` | Ask from the terminal (`--no-llm`: show only the retrieved passages) | console |
 | 11 | `python scripts/11_train_classifiers.py` | Compares 5 classifiers with cross-validation, saves the best | `models/classifier.pkl`, `reports/classification_results.csv`, `reports/confusion_matrix.csv` |
 
-Minimal order to get the full application: **1, 2, 3, 5, 7, 10, 11**.
+Minimal order to get the full application: **1, 2, 3, 5, 7, 10, 11, 12, 13** (12 and 13 only for "Ask AI").
 Changing the stopwords, the cleaning or the category rules means re-running the scripts from that point on.
 
 Helper scripts: `demo_morphology.py` (shows each step of the analysis on a sentence), `inspect_formulas.py`
@@ -166,6 +170,17 @@ Open <http://localhost:5173>. The interactive API documentation is at <http://lo
 The API degrades gracefully: without `partitions.json` the group search is hidden, without `labels.csv` there is no
 category filter, without `classifier.pkl` the classify page explains which script to run.
 
+### Gemini key for "Ask AI"
+
+1. Create a free key in [Google AI Studio](https://aistudio.google.com/apikey).
+2. Create the file `.env` at the project root (next to `config.py`) containing one line: `GEMINI_API_KEY=your_key_here`
+3. Make sure `.env` is in `.gitignore`. **Never commit the key.**
+4. Run scripts 12 and 13, restart the API.
+
+The model names are in `config.py` (`GEMINI_LLM_MODEL`, `GEMINI_EMBED_MODEL`); change them there if Google renames or
+retires one. Free-tier limits (requests and tokens per minute) apply: script 13 pauses between requests, retries on
+"429" and saves its progress, so it can simply be run again.
+
 ### API endpoints
 
 | Endpoint | Purpose |
@@ -176,6 +191,7 @@ category filter, without `classifier.pkl` the classify page explains which scrip
 | `GET /api/documents/{id}/similar?k=&measure=` | Similar decisions |
 | `GET /api/partitions` | The groups: size and main terms |
 | `GET /api/categories` | Categories with their Arabic name and number of decisions |
+| `POST /api/ask` | `{ "question": "..." }` returns the answer, the retrieval mode and the passages used (with the decision they come from and whether the answer cites them) |
 | `POST /api/classify` | `{ "text": "..." }` returns a probability for each category |
 
 ## How each part works
@@ -300,7 +316,29 @@ and **grouped** (a duplicate or a template family is never split between trainin
 chi-square selection are fitted inside each training fold. Models: Complement Naive Bayes, Rocchio (nearest centroid), KNN
 (cosine), logistic regression, linear SVM; each keeping 10%, 25% or 100% of the terms ranked by chi-square.
 
-### 10. Web interface (`frontend/`)
+### 10. Ask AI: RAG (`src/rag`)
+
+```
+question -> [keyword retriever: TF-IDF cosine over passages] --\
+         -> [embedding retriever: Gemini vectors, cosine]    ----> reciprocal rank fusion -> top 5 passages
+         -> prompt (rules + numbered passages + question) -> Gemini -> answer with [n] citations -> sources
+```
+
+* **Passages** (`chunker.py`): about 400 words, overlap of 80, cut at the end of a sentence when possible; the subject line
+  and the duplicates are left out.
+* **Keyword retriever**: the same engine as the search page (same morphology, same hand-written TF-IDF and cosine) applied to the passages.
+* **Embedding retriever**: `gemini-embedding-001` through the HTTP API (768 dimensions, normalised so that a dot product is a cosine).
+  Passages and questions use different task types (`RETRIEVAL_DOCUMENT` / `RETRIEVAL_QUERY`).
+* **Fusion**: reciprocal rank fusion, `score = sum 1/(60 + rank)`: only ranks are used, so the two score scales are never compared.
+  At most 2 passages per decision keep the sources varied.
+* **Generation** (`answer.py`): the LLM must answer only from the numbered passages, cite them, and say when they do not
+  contain the answer. With no retrieved passage the LLM is not called.
+* **Fallback**: without embeddings, or if Gemini's embedding call fails, the answer uses keywords only (the interface says so).
+* **Why the Gemini API for embeddings and not a local model**: the local multilingual models need PyTorch, which is heavy
+  and not always available for the newest Python on Windows; the API needs one `httpx` call and the same key as the LLM.
+* Each question is independent (no memory of previous turns).
+
+### 11. Web interface (`frontend/`)
 
 React 18 + Vite, plain CSS, react-router. All interface text is in `src/strings.js`. The search state is kept in the URL
 (`?q=...&category=...&scope=...`), so the back button and shared links work. The header and the text of the decisions use
@@ -383,7 +421,7 @@ The project did not go straight; these are the problems met and what was decided
 pytest
 ```
 
-132 tests, no data needed (they use small in-memory corpora): extraction and cleaning, header parsing, morphology, index and
+152 tests, no data needed (they use small in-memory corpora): extraction and cleaning, header parsing, morphology, index and
 the numbers of the course, similarity measures, search engine, partitions and K-Means, duplicates and vocabulary zones,
 labels and chi-square, categories, classification (including the leak guards and the fold grouping) and the API.
 The API and classification tests are skipped automatically if FastAPI or scikit-learn is not installed.
@@ -399,6 +437,8 @@ The API and classification tests are skipped automatically if FastAPI or scikit-
 * **Stemming is rule-based**: broken plurals (`الشفعاء`) get a different stem from the singular (`شفعة`) and need to be
   listed explicitly where it matters (the category rules do this).
 * Searching for the **name of a judge** finds nothing, by design: those names are removed from the analysed text.
+* **"Ask AI" can be wrong**: the LLM may misread a passage or cite one that does not support the claim; the citations exist so the
+  reader can check. It is not legal advice. The passages are sent to Google's API, so use it only with data you may share.
 * The classifier always picks one of its five categories: it has no "none of these" answer, and a text from another field
   gets low probabilities rather than a refusal.
 
@@ -408,13 +448,14 @@ The API and classification tests are skipped automatically if FastAPI or scikit-
    word / light / root modes.
 2. **Ranking improvements**: a boost for the subject line, or BM25; the decisions about "التشطيب" are ambiguous (striking a
    case off the roll against striking a registration) and rank poorly.
-3. **RAG with an LLM**: split the decisions into chunks, multilingual embeddings, hybrid retrieval (BM25 + embeddings, merged
-   by reciprocal rank fusion), and an answer in Arabic that cites the decisions it uses.
+3. **RAG evaluation**: 10 to 15 questions with the decisions that should be retrieved (recall@5 for keywords only, embeddings only
+   and hybrid), and a check that every claim of an answer is supported by its cited passage. Memory of previous turns.
 4. **Stability test of the clustering**: run K-Means with several seeds and measure the agreement between the runs; name the
    groups in the interface.
 
 ## Credits
 
 * Course: *Introduction au Text Mining*.
+* Gemini API (Google) for embeddings and answers.
 * ISRI stemmer: algorithm of the NLTK `ISRIStemmer` (Apache License 2.0), vendored in `src/morphology/isri.py`.
 * Typefaces (through `@fontsource`): Amiri, Noto Naskh Arabic, IBM Plex Sans Arabic.

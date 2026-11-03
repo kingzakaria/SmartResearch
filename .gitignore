@@ -1,4 +1,4 @@
-# Byte-compiled / optimized / DLL files
+﻿# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
 *$py.class
@@ -67,9 +67,6 @@ instance/
 .webassets-cache
 
 # data and generated files
-data/
-models/
-reports/
 
 # Scrapy stuff:
 .scrapy
@@ -232,3 +229,7 @@ models/*
 reports/*
 !reports/.gitkeep
 *.pkl
+
+# private court decisions and front-end dependencies
+data/raw/
+node_modules/

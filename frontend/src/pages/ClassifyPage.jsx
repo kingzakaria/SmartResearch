@@ -47,7 +47,7 @@ export default function ClassifyPage() {
               <li key={p.name} className={i === 0 ? "top" : ""}>
                 <span className="p-name" lang="ar" dir="rtl">{p.name_ar}</span>
                 <span className="bar" aria-hidden="true"><span style={{ width: `${Math.max(2, p.probability * 100)}%` }} /></span>
-                <span className="p-value">{(p.probability * 100).toFixed(1)}%</span>
+                <span className="p-value">{(p.probability * 100).toLocaleString("ar-MA", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}٪</span>
               </li>
             ))}
           </ol>

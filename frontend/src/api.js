@@ -53,6 +53,7 @@ export const api = {
   search: (q, k, all, nProbe, category) =>
     get("/api/search", { q, k, all: all ? "true" : "", n_probe: nProbe || "", category: category || "" }),
   classify: (text) => post("/api/classify", { text }),
+  ask: (question) => post("/api/ask", { question }),
   document: (id, q) => get(`/api/documents/${encodeURIComponent(id)}`, { q }),
   similar: (id, measure, k = 8) => get(`/api/documents/${encodeURIComponent(id)}/similar`, { measure, k }),
 };

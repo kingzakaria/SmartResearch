@@ -1,4 +1,4 @@
-"""Central configuration: every path and parameter of the project lives here."""
+﻿"""Central configuration: every path and parameter of the project lives here."""
 from pathlib import Path
 
 # ---------- Paths ----------
@@ -47,6 +47,19 @@ CLASSIFIER_MIN_DF = 2       # frequency thresholding inside each training fold: 
 CLASSIFIER_MAX_DF = 0.5     # ... and terms in more than this share of the documents
 CLASSIFIER_PKL = MODELS_DIR / "classifier.pkl"
 
-CHUNK_SIZE = 400            # tokens per chunk (RAG)
-CHUNK_OVERLAP = 80
+# ---------- RAG: "Ask AI" ----------
+CHUNK_SIZE = 400            # words per passage (chunk)
+CHUNK_OVERLAP = 80          # words shared by two consecutive passages, so an idea cut at the border is not lost
 TOP_K = 10
+CHUNKS_JSON = PROCESSED_DIR / "chunks.json"
+EMBEDDINGS_NPZ = MODELS_DIR / "chunk_embeddings.npz"
+RAG_CANDIDATES = 20         # each retriever (keywords, embeddings) proposes this many passages
+RAG_TOP_PASSAGES = 5        # passages given to the LLM after fusing both rankings
+RAG_MAX_PER_DOC = 2         # at most this many passages from the same decision (variety of sources)
+RRF_K = 60                  # reciprocal rank fusion constant: score = sum of 1 / (RRF_K + rank)
+GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
+GEMINI_LLM_MODEL = "gemini-3.1-flash-lite"      # change here if Google renames or retires it (see AI Studio)
+GEMINI_TIMEOUT = 180        # seconds to wait for Gemini before giving up on one try
+GEMINI_EMBED_MODEL = "gemini-embedding-001"
+EMBED_DIM = 768             # size of each embedding vector (the model can give 768, 1536 or 3072)
+ENV_FILE = ROOT / ".env"    # holds GEMINI_API_KEY=...  (never commit it)

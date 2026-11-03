@@ -45,7 +45,7 @@ export default function DocumentPage() {
             <div><dt>{T.decisionNo}</dt><dd>{doc.decision_no || "—"}</dd></div>
             <div><dt>{T.caseNo}</dt><dd>{doc.case_no || "—"}</dd></div>
             <div><dt>{T.date}</dt><dd>{formatDate(doc.date) || "—"}</dd></div>
-            <div><dt>{T.words}</dt><dd>{doc.n_words?.toLocaleString("en") ?? "—"}</dd></div>
+            <div><dt>{T.words}</dt><dd>{doc.n_words?.toLocaleString("ar-MA") ?? "—"}</dd></div>
             <div><dt>{T.file}</dt><dd>{doc.filename}</dd></div>
             {doc.category && <div><dt>{T.category}</dt><dd lang="ar" dir="rtl">{doc.category_ar || doc.category}</dd></div>}
           </dl>
@@ -107,7 +107,7 @@ function Similar({ id, q }) {
                 <span lang="ar" dir="rtl" className="s-title">{r.subject || T.subjectMissing}</span>
                 <span className="s-meta">
                   <span>{r.decision_no || r.doc_id}</span>
-                  <span title={data.is_distance ? T.distance : T.similarity}>{r.value.toFixed(3)}</span>
+                  <span title={data.is_distance ? T.distance : T.similarity}>{r.value.toLocaleString("ar-MA", { minimumFractionDigits: 3, maximumFractionDigits: 3 })}</span>
                 </span>
               </Link>
             </li>

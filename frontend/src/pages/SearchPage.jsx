@@ -167,11 +167,11 @@ export default function SearchPage() {
                       {r.category && <span className="group-tag" lang="ar" dir="rtl">{categories.find((c) => c.name === r.category)?.name_ar || r.category}</span>}
                       {r.group !== null && r.group !== undefined && <span className="group-tag">{T.group(r.group + 1)}</span>}
                     </div>
-                    <div className="score" title={`${T.score}: ${r.score.toFixed(3)}`}>
+                    <div className="score" title={`${T.score}: ${r.score.toLocaleString("ar-MA", { minimumFractionDigits: 3, maximumFractionDigits: 3 })}`}>
                       <span className="bar" aria-hidden="true">
                         <span style={{ width: `${Math.max(4, (r.score / topScore) * 100)}%` }} />
                       </span>
-                      <span className="score-value">{r.score.toFixed(3)}</span>
+                      <span className="score-value">{r.score.toLocaleString("ar-MA", { minimumFractionDigits: 3, maximumFractionDigits: 3 })}</span>
                     </div>
                   </li>
                 ))}

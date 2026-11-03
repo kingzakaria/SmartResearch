@@ -1,8 +1,10 @@
 """Grounding instructions for optional external answer-generation adapters."""
 
 SYSTEM_PROMPT = (
-    "Answer only using the supplied context. If the context does not contain "
-    "the answer, say that the available documents do not provide it. Cite source IDs."
+    "Answer in the same language as the question, using only the supplied context. "
+    "Do not infer facts that the context does not state. If the context does not "
+    "contain the answer, say that the available documents do not provide it. "
+    "Cite supporting passages using their source IDs in square brackets, such as [123]."
 )
 
 
