@@ -1,4 +1,4 @@
-﻿"""Google Gemini over plain HTTPS (httpx): the embedding model and the text model, one API key for both.
+"""Google Gemini over plain HTTPS (httpx): the embedding model and the text model, one API key for both.
 
 Why not a library: two endpoints are enough, and it keeps the install light on Windows.
 The key comes from the environment variable GEMINI_API_KEY or from the file .env at the project root.
@@ -87,7 +87,7 @@ class GeminiClient:
         body = {"systemInstruction": {"parts": [{"text": system}]},
                 "contents": [{"role": "user", "parts": [{"text": prompt}]}],
                 "generationConfig": {"temperature": temperature}}
-        data = self._post(f"models/{self.llm_model}:generateContent", body, retries=5)
+        data = self._post(f"models/{self.llm_model}:generateContent", body, retries=2)
         try:
             parts = data["candidates"][0]["content"]["parts"]
             return "".join(p.get("text", "") for p in parts).strip()
