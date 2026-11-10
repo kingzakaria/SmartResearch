@@ -27,6 +27,10 @@ def main() -> None:
 
     terms = json.loads(config.TERMS_JSON.read_text(encoding="utf-8"))
     docs = {str(d["doc_id"]): d for d in json.loads(config.DOCUMENTS_JSON.read_text(encoding="utf-8"))}
+    chamber = config.PARTITION_CHAMBER                 # the groups are built inside ONE chamber (the supervised
+    inside = {d for d, doc in docs.items() if doc.get("chamber", config.DEFAULT_CHAMBER) == chamber}   # routing handles chambers)
+    terms = {d: t for d, t in terms.items() if str(d) in inside}
+    print(f"Chamber {chamber}: {len(terms)} documents")
     dup = json.loads(config.DUPLICATES_JSON.read_text(encoding="utf-8")) if config.DUPLICATES_JSON.exists() else {}
     drop, groups = dup.get("drop", []), dup.get("groups", [])
     model = cluster_features(terms, drop, config.MIN_DOC_FREQ, args.max_ratio, config.LOG_BASE)
@@ -47,6 +51,7 @@ def main() -> None:
     data = build_partitions(terms, args.k, drop, groups, config.RANDOM_SEED, config.MIN_DOC_FREQ,
                             args.max_ratio, config.LOG_BASE)
     config.MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    data["chamber"] = chamber
     config.PARTITIONS_JSON.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
     centrals = central_documents(data, {d: model.doc_vector(d) for d in vectors})

@@ -208,3 +208,26 @@ def test_load_api_key_from_env_file(tmp_path, monkeypatch):
     assert load_api_key(cfg) == "fromenv"
     monkeypatch.delenv("GEMINI_API_KEY")
     assert load_api_key(type("C", (), {"ENV_FILE": tmp_path / "missing"})) is None
+
+
+def test_embed_retries_after_a_dropped_connection():
+    import httpx
+
+    class Flaky(FakeHttp):
+        def post(self, url, json=None, headers=None):
+            if not self.requests:
+                self.requests.append(url)
+                raise httpx.ReadError("connection reset")
+            return super().post(url, json, headers)
+
+    http = Flaky([FakeResponse(200, {"embeddings": [{"values": [1, 0]}]})])
+    pauses = []
+    assert GeminiClient("K", config, http=http, sleep=pauses.append).embed(["a"]).shape == (1, 2)
+    assert pauses == [5]
+
+    class Dead:
+        def post(self, *a, **k):
+            raise httpx.ConnectError("down")
+
+    with pytest.raises(GeminiError, match="Cannot reach"):
+        GeminiClient("K", config, http=Dead(), sleep=lambda s: None).embed_query("a")

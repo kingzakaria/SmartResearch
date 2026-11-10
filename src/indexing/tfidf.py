@@ -76,8 +76,13 @@ class TfidfModel:
         dot = sum(w * doc_vec[t] for t, w in query_vec.items() if t in doc_vec)   # only shared terms
         return dot / (q_norm * d_norm)
 
-    def cosine_scores(self, terms: list[str]) -> dict[str, float]:
+    def cosine_scores(self, terms: list[str], allowed: set | None = None) -> dict[str, float]:
         """Cosine of the query against every CANDIDATE document (those sharing at least one term).
-        This is where the inverted index pays off: other documents are never touched."""
+        This is where the inverted index pays off: other documents are never touched.
+        `allowed` (a set of doc_ids) keeps the search inside part of the collection: documents outside it are
+        never scored (supervised routing: only the predicted chamber is searched)."""
         query_vec = self.query_vector(terms)
-        return {d: self.cosine(query_vec, d) for d in self.index.candidates(list(query_vec))}
+        candidates = self.index.candidates(list(query_vec))
+        if allowed is not None:
+            candidates &= allowed
+        return {d: self.cosine(query_vec, d) for d in candidates}

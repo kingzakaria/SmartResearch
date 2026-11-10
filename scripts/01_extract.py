@@ -15,21 +15,28 @@ FIELDS = ["decision_no", "date", "case_no", "subject"]
 
 
 def main() -> None:
-    files = list_files(config.RAW_DIR)
+    files = []                                        # (chamber, path) for every chamber that has files
+    for chamber, info in config.CHAMBERS.items():
+        found = list_files(info["dir"]) if info["dir"].exists() else []
+        print(f"{chamber:<16} {len(found):>5} files in {info['dir']}")
+        files += [(chamber, f) for f in found]
     if not files:
-        print(f"No .txt files found in {config.RAW_DIR}")
+        print("No .txt files found")
         return
 
     documents, empty = [], []
-    for f in files:
+    for chamber, f in files:
         raw = read_file(f, config.ENCODING)
         if not raw.strip():
             empty.append(f.name)
             continue
+        prefix = config.CHAMBERS[chamber]["id_prefix"]
+        doc_id = int(f.stem) if f.stem.isdigit() and not prefix else f"{prefix}{f.stem}"
         doc = parse_document(raw)
         words = len(doc["body"].split())
         documents.append({
-            "doc_id": int(f.stem) if f.stem.isdigit() else f.stem,
+            "doc_id": doc_id,
+            "chamber": chamber,
             "filename": f.name,
             "decision_no": doc["decision_no"],
             "date": doc["date"],
@@ -48,6 +55,8 @@ def main() -> None:
         json.dump(documents, fh, ensure_ascii=False, indent=1)
 
     n = len(documents)
+    for chamber in config.CHAMBERS:
+        print(f"  {chamber}: {sum(1 for d in documents if d['chamber'] == chamber)} documents")
     print(f"Files read: {len(files)} | empty (skipped): {len(empty)} {empty}")
     print(f"Documents saved: {n} -> {config.DOCUMENTS_JSON}\n")
 

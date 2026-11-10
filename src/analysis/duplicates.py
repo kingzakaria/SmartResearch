@@ -9,11 +9,49 @@ Two documents are compared by the Jaccard similarity of their TERM SETS (the ste
 """
 
 
+def _jaccard_pairs_sparse(sets: dict, min_score: float):
+    """Same result as the loops below, with a sparse matrix product (shared terms of ALL pairs at once).
+    None when numpy/scipy are not installed (the loops are used instead)."""
+    try:
+        import numpy as np
+        from scipy.sparse import csr_matrix
+    except ImportError:
+        return None
+    ids = list(sets)
+    vocabulary: dict[str, int] = {}
+    rows, cols = [], []
+    for i, doc_id in enumerate(ids):
+        for term in sets[doc_id]:
+            rows.append(i)
+            cols.append(vocabulary.setdefault(term, len(vocabulary)))
+    matrix = csr_matrix((np.ones(len(rows), dtype=np.float32), (rows, cols)), shape=(len(ids), len(vocabulary)))
+    sizes = np.asarray(matrix.sum(axis=1)).ravel()
+    pairs = []
+    step = 500                                           # blocks of rows keep the memory small
+    for start in range(0, len(ids), step):
+        block = (matrix[start:start + step] @ matrix.T).toarray()
+        for r in range(block.shape[0]):
+            i = start + r
+            common = block[r, i + 1:]
+            union = sizes[i] + sizes[i + 1:] - common
+            score = np.divide(common, union, out=np.zeros_like(common), where=union > 0)
+            for off in np.nonzero(score >= min_score)[0]:
+                j = i + 1 + int(off)
+                a, b = ids[i], ids[j]
+                pairs.append((a, b, float(score[off])) if a < b else (b, a, float(score[off])))
+    pairs.sort(key=lambda p: (-p[2], _order(p[0]), _order(p[1])))
+    return pairs
+
+
 def jaccard_pairs(terms_by_doc: dict, min_score: float = 0.5) -> list[tuple[str, str, float]]:
     """All pairs of documents whose Jaccard similarity is at least `min_score`, most similar first.
 
     An inverted list (term -> documents) is used so that only documents sharing a term are compared."""
     sets = {str(d): set(t) for d, t in terms_by_doc.items()}
+    if len(sets) > 800:                                  # thousands of decisions: pairwise loops are too slow
+        fast = _jaccard_pairs_sparse(sets, min_score)
+        if fast is not None:
+            return fast
     postings: dict[str, list[str]] = {}
     for doc_id, terms in sets.items():
         for term in terms:

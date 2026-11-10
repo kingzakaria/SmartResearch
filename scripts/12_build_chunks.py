@@ -18,6 +18,8 @@ from src.rag.chunker import build_chunks  # noqa: E402
 
 def main() -> None:
     docs = json.loads(config.DOCUMENTS_JSON.read_text(encoding="utf-8"))
+    docs = [d for d in docs if d.get("chamber", config.DEFAULT_CHAMBER) in config.RAG_CHAMBERS]
+    print(f"Chambers used by Ask AI: {config.RAG_CHAMBERS}")
     dup = json.loads(config.DUPLICATES_JSON.read_text(encoding="utf-8")) if config.DUPLICATES_JSON.exists() else {}
     skip = dup.get("drop", [])
     analyzer = analyzer_from_config(config)

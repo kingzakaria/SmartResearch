@@ -15,6 +15,7 @@ export default function SearchPage() {
   const k = Number(params.get("k")) || PAGE;
   const category = params.get("category") || "";
   const scope = Number(params.get("scope")) || 0; // 0 = every decision, n = the n best groups
+  const chamber = params.get("chamber") || "auto"; // auto = predicted by Naive Bayes, all, or a chamber key
 
   const [draft, setDraft] = useState(q);
   const [data, setData] = useState(null);
@@ -39,14 +40,14 @@ export default function SearchPage() {
     let cancelled = false;
     setLoading(true);
     api
-      .search(q, k, all, scope, category)
+      .search(q, k, all, scope, category, chamber)
       .then((d) => !cancelled && (setData(d), setError(null)))
       .catch((e) => !cancelled && setError(e))
       .finally(() => !cancelled && setLoading(false));
     return () => {
       cancelled = true;
     };
-  }, [q, all, k, scope, category]);
+  }, [q, all, k, scope, category, chamber]);
 
   const go = (next) => {
     const p = {};
@@ -55,6 +56,8 @@ export default function SearchPage() {
     if (next.scope) p.scope = String(next.scope);
     const chosen = next.category === undefined ? category : next.category;
     if (chosen) p.category = chosen;
+    const ch = next.chamber === undefined ? chamber : next.chamber;
+    if (ch && ch !== "auto") p.chamber = ch;
     if (next.k && next.k !== PAGE) p.k = String(next.k);
     setParams(p);
   };
@@ -75,7 +78,7 @@ export default function SearchPage() {
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           placeholder={T.searchPlaceholder}
-          aria-label="عبارة البحث"
+          aria-label="Search query"
           autoFocus
         />
         <button type="submit">{T.searchButton}</button>
@@ -83,6 +86,18 @@ export default function SearchPage() {
           <input type="checkbox" checked={all} onChange={(e) => go({ q, all: e.target.checked, scope })} />
           {T.matchAll}
         </label>
+        {stats?.chambers?.length > 1 && (
+          <label className="scope" title={T.chamberHint}>
+            {T.chamber}
+            <select value={chamber} onChange={(e) => go({ q, all, scope, chamber: e.target.value })}>
+              <option value="auto">{T.chamberAuto}</option>
+              <option value="all">{T.chamberAll}</option>
+              {stats.chambers.map((c) => (
+                <option key={c.key} value={c.key}>{`${c.name_ar} (${c.count})`}</option>
+              ))}
+            </select>
+          </label>
+        )}
         {categories.length > 0 && (
           <label className="scope">
             {T.category}
@@ -127,6 +142,7 @@ export default function SearchPage() {
       {data && (
         <section aria-live="polite" className={loading ? "is-loading" : ""}>
           <Reading data={data} onPick={(term) => go({ q: term, all, scope })} />
+          <ChamberNote routing={data.chamber_routing} onAll={() => go({ q, all, scope, chamber: "all" })} />
 
           {data.results.length > 0 && (
             <>
@@ -164,14 +180,19 @@ export default function SearchPage() {
                         </span>
                       )}
                       {r.date && <span>{formatDate(r.date)}</span>}
+                      {data.chamber_routing && data.chamber_routing.searched.length > 1 && r.chamber && (
+                        <span className="group-tag" lang="ar" dir="rtl">
+                          {stats?.chambers?.find((c) => c.key === r.chamber)?.name_ar || r.chamber}
+                        </span>
+                      )}
                       {r.category && <span className="group-tag" lang="ar" dir="rtl">{categories.find((c) => c.name === r.category)?.name_ar || r.category}</span>}
                       {r.group !== null && r.group !== undefined && <span className="group-tag">{T.group(r.group + 1)}</span>}
                     </div>
-                    <div className="score" title={`${T.score}: ${r.score.toLocaleString("ar-MA", { minimumFractionDigits: 3, maximumFractionDigits: 3 })}`}>
+                    <div className="score" title={`${T.score}: ${r.score.toFixed(3)}`}>
                       <span className="bar" aria-hidden="true">
                         <span style={{ width: `${Math.max(4, (r.score / topScore) * 100)}%` }} />
                       </span>
-                      <span className="score-value">{r.score.toLocaleString("ar-MA", { minimumFractionDigits: 3, maximumFractionDigits: 3 })}</span>
+                      <span className="score-value">{r.score.toFixed(3)}</span>
                     </div>
                   </li>
                 ))}
@@ -193,6 +214,28 @@ export default function SearchPage() {
         </section>
       )}
     </>
+  );
+}
+
+// Which chamber(s) were searched, and why: the prediction of the Naive Bayes classifier.
+function ChamberNote({ routing, onAll }) {
+  if (!routing || routing.mode !== "auto") return null;
+  const narrowed = routing.searched.length === 1;
+  const top = routing.probabilities?.[0];
+  return (
+    <p className="chamber-note" aria-live="polite">
+      {narrowed ? (
+        <>
+          <span>{T.routedTo}</span>{" "}
+          <b lang="ar" dir="rtl">{routing.searched[0].name_ar}</b>
+          {top && <span className="muted"> · {T.routedConfidence(top.probability)}</span>}
+          {" · "}
+          <button type="button" className="linklike" onClick={onAll}>{T.searchAllChambers}</button>
+        </>
+      ) : (
+        <span className="muted">{T.routedWhy[routing.reason] || ""}</span>
+      )}
+    </p>
   );
 }
 

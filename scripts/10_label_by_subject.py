@@ -24,7 +24,8 @@ def main() -> None:
     docs = json.loads(config.DOCUMENTS_JSON.read_text(encoding="utf-8"))
     dup = json.loads(config.DUPLICATES_JSON.read_text(encoding="utf-8")) if config.DUPLICATES_JSON.exists() else {}
     drop = set(dup.get("drop", []))
-    docs = [d for d in docs if str(d["doc_id"]) not in drop]
+    docs = [d for d in docs if str(d["doc_id"]) not in drop
+            and d.get("chamber", config.DEFAULT_CHAMBER) == config.LABEL_CHAMBER]   # the rules are for one chamber
 
     labelled = [(d, *assign_category(d.get("subject"), rules, analyzer)) for d in docs]
     counts = Counter(c for _, c, _ in labelled)

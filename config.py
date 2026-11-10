@@ -6,12 +6,22 @@ ROOT = Path(__file__).resolve().parent
 
 DATA_DIR = ROOT / "data"
 RAW_DIR = DATA_DIR / "raw" / "real_estate_chamber"   # the 365 .txt files (never modified)
+PERSONAL_STATUS_DIR = DATA_DIR / "raw" / "personal_status_chamber"   # the second class (.txt files, never modified)
 PROCESSED_DIR = DATA_DIR / "processed"
 RESOURCES_DIR = DATA_DIR / "resources"
 EVAL_DIR = DATA_DIR / "eval"
 
 MODELS_DIR = ROOT / "models"
 REPORTS_DIR = ROOT / "reports"
+
+# ---------- Chambers (the classes of the collection) ----------
+# key -> where the decisions are, Arabic name, prefix of the doc_id. The first chamber keeps plain numbers as ids
+# (1, 2, ...) so that everything built before the second chamber stays valid; the others are prefixed ("ps-12").
+CHAMBERS = {
+    "real_estate": {"dir": RAW_DIR, "name_ar": "الغرفة العقارية", "id_prefix": ""},
+    "personal_status": {"dir": PERSONAL_STATUS_DIR, "name_ar": "غرفة الأحوال الشخصية والميراث", "id_prefix": "ps-"},
+}
+DEFAULT_CHAMBER = "real_estate"
 
 # ---------- Generated files ----------
 DOCUMENTS_JSON = PROCESSED_DIR / "documents.json"
@@ -47,6 +57,15 @@ CLASSIFIER_MIN_DF = 2       # frequency thresholding inside each training fold: 
 CLASSIFIER_MAX_DF = 0.5     # ... and terms in more than this share of the documents
 CLASSIFIER_PKL = MODELS_DIR / "classifier.pkl"
 
+# ---------- Naive Bayes: which chamber does a query belong to? ----------
+NB_MODEL_JSON = MODELS_DIR / "naive_bayes.json"
+NB_TEST_PER_CLASS = 20      # as in the TP: the last 20 decisions of each chamber are kept for the test
+CHAMBER_MIN_CONFIDENCE = 0.90   # below this probability the query is searched in every chamber
+NB_PRIORS = "empirical"       # "uniform": both chambers equally likely before reading the query | "empirical": share of decisions (the TP)
+PARTITION_CHAMBER = "real_estate"   # the K-Means groups were built for this chamber only
+LABEL_CHAMBER = "real_estate"       # the category rules (subject lines) were written for this chamber only
+RAG_CHAMBERS = ["real_estate"]      # "Ask AI" passages: the free embedding quota is about 1,000 passages a day
+
 # ---------- RAG: "Ask AI" ----------
 CHUNK_SIZE = 400            # words per passage (chunk)
 CHUNK_OVERLAP = 80          # words shared by two consecutive passages, so an idea cut at the border is not lost
@@ -58,7 +77,7 @@ RAG_TOP_PASSAGES = 5        # passages given to the LLM after fusing both rankin
 RAG_MAX_PER_DOC = 2         # at most this many passages from the same decision (variety of sources)
 RRF_K = 60                  # reciprocal rank fusion constant: score = sum of 1 / (RRF_K + rank)
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
-GEMINI_LLM_MODEL = "gemini-3.1-flash-lite"      # change here if Google renames or retires it (see AI Studio)
+GEMINI_LLM_MODEL = "gemini-flash-latest"      # change here if Google renames or retires it (see AI Studio)
 GEMINI_TIMEOUT = 180        # seconds to wait for Gemini before giving up on one try
 GEMINI_EMBED_MODEL = "gemini-embedding-001"
 EMBED_DIM = 768             # size of each embedding vector (the model can give 768, 1536 or 3072)

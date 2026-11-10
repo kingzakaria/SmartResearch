@@ -50,8 +50,8 @@ async function post(path, body) {
 export const api = {
   stats: () => get("/api/stats"),
   categories: () => get("/api/categories"),
-  search: (q, k, all, nProbe, category) =>
-    get("/api/search", { q, k, all: all ? "true" : "", n_probe: nProbe || "", category: category || "" }),
+  search: (q, k, all, nProbe, category, chamber) =>
+    get("/api/search", { q, k, all: all ? "true" : "", n_probe: nProbe || "", category: category || "", chamber: chamber || "auto" }),
   classify: (text) => post("/api/classify", { text }),
   ask: (question) => post("/api/ask", { question }),
   document: (id, q) => get(`/api/documents/${encodeURIComponent(id)}`, { q }),

@@ -97,10 +97,18 @@ def create_app(engine: SearchEngine | None = None, classifier=None, rag=None) ->
         return {"documents": engine.index.n_docs, "terms": len(engine.index.postings),
                 "mode": engine.analyzer.mode, "years": years,
                 "partitions": None if engine.partitions is None else
-                {"k": engine.partitions.k, "sizes": engine.partitions.sizes},
+                {"k": engine.partitions.k, "sizes": engine.partitions.sizes, "chamber": engine.partitions_chamber},
+                "chambers": chamber_list(engine), "router": engine.router is not None,
                 "classifier": get_classifier() is not None,
                 "rag": rag_status(),
                 "measures": sorted(measures.MEASURES)}
+
+    def chamber_list(engine) -> list:
+        counts: dict[str, int] = {}
+        for chamber in engine.chambers.values():
+            counts[chamber] = counts.get(chamber, 0) + 1
+        return [{"key": k, "name_ar": engine.chamber_names.get(k, k), "count": n}
+                for k, n in sorted(counts.items(), key=lambda kv: -kv[1])]
 
     def rag_status() -> dict:
         if state["rag"] is not None:
@@ -121,6 +129,13 @@ def create_app(engine: SearchEngine | None = None, classifier=None, rag=None) ->
             if error.status == 429:
                 raise HTTPException(429, "Gemini free-tier limit reached. Wait a minute and ask again.")
             raise HTTPException(502, f"Gemini error: {error}")
+
+    @app.get("/api/chambers")
+    def chambers():
+        """The chambers (classes of the collection) with their Arabic name and number of decisions."""
+        engine = get_engine()
+        return {"chambers": chamber_list(engine), "router": engine.router is not None,
+                "min_confidence": engine.router.min_confidence if engine.router else None}
 
     @app.get("/api/categories")
     def categories():
@@ -156,9 +171,14 @@ def create_app(engine: SearchEngine | None = None, classifier=None, rag=None) ->
     @app.get("/api/search")
     def search(q: str = Query("", max_length=500), k: int = Query(10, ge=1, le=MAX_K), all: bool = False,
                n_probe: int = Query(0, ge=0, le=20, description="0 = search everything; n = only the n best groups"),
-               category: str = Query("", max_length=60)):
-        response = get_engine().search(q, k=k, require_all=all, n_probe=n_probe or None,
-                                           category=category or None)
+               category: str = Query("", max_length=60),
+               chamber: str = Query("", max_length=40, description="'' or 'all' = every chamber; 'auto' = the chamber "
+                                    "predicted by Naive Bayes; or a chamber key")):
+        try:
+            response = get_engine().search(q, k=k, require_all=all, n_probe=n_probe or None,
+                                           category=category or None, chamber=chamber or None)
+        except ValueError as error:
+            raise HTTPException(400, str(error))
         data = asdict(response)
         data["suggestions"] = {t: [{"term": s, "distance": d} for s, d in found]
                                for t, found in response.suggestions.items()}
@@ -179,6 +199,8 @@ def create_app(engine: SearchEngine | None = None, classifier=None, rag=None) ->
             "subject_segments": segment_text(subject, subject_spans),
             "doc_id": doc_id, "filename": doc.get("filename"), "decision_no": doc.get("decision_no"),
             "date": doc.get("date"), "case_no": doc.get("case_no"), "subject": doc.get("subject"),
+            "chamber": engine.chambers.get(doc_id),
+            "chamber_ar": engine.chamber_names.get(engine.chambers.get(doc_id) or "", None),
             "category": engine.categories.get(doc_id),
             "category_ar": engine.category_names.get(engine.categories.get(doc_id) or "", None),
             "n_words": doc.get("n_words"), "terms": terms, "matches": len(spans) + len(subject_spans),
@@ -186,12 +208,12 @@ def create_app(engine: SearchEngine | None = None, classifier=None, rag=None) ->
         }
 
     @app.get("/api/documents/{doc_id}/similar")
-    def similar(doc_id: str, k: int = Query(8, ge=1, le=MAX_K), measure: str = "cosine"):
+    def similar(doc_id: str, k: int = Query(8, ge=1, le=MAX_K), measure: str = "cosine", same_chamber: bool = True):
         engine = get_engine()
         if measure not in measures.MEASURES:
             raise HTTPException(400, f"measure must be one of {sorted(measures.MEASURES)}")
         try:
-            found = engine.similar(doc_id, k=k, measure=measure)
+            found = engine.similar(doc_id, k=k, measure=measure, same_chamber=same_chamber)
         except KeyError:
             raise HTTPException(404, f"Document {doc_id} not found")
         is_distance = measures.MEASURES[measure][2]
@@ -199,7 +221,8 @@ def create_app(engine: SearchEngine | None = None, classifier=None, rag=None) ->
         for other, value in found:
             d = engine.documents.get(other, {})
             items.append({"doc_id": other, "value": value, "decision_no": d.get("decision_no"),
-                          "date": d.get("date"), "case_no": d.get("case_no"), "subject": d.get("subject")})
+                          "date": d.get("date"), "case_no": d.get("case_no"), "subject": d.get("subject"),
+                          "chamber": engine.chambers.get(other)})
         return {"doc_id": doc_id, "measure": measure, "is_distance": is_distance, "results": items}
 
     return app

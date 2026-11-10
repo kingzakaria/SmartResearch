@@ -1,6 +1,7 @@
 """Step 6b: full search against partitioned search: how much work is saved, and how much accuracy is lost?
 Run from the project root: python scripts/08_compare_partitioned.py
-Test queries: the subject of every decision (a realistic short legal query) plus the words of its title.
+Test queries: the subject of every decision (a realistic short legal query) of the chamber the groups were built for.
+The groups exist for ONE chamber (config.PARTITION_CHAMBER): both searches below stay inside it.
 Writes reports/partition_comparison.csv.
 """
 import csv
@@ -30,16 +31,18 @@ def main() -> None:
     if engine.partitions is None:
         sys.exit("No partitions: run python scripts/07_build_partitions.py first.")
     p, k = engine.partitions, engine.partitions.k
-    queries = sorted({d["subject"] for d in engine.documents.values() if d.get("subject")})
-    print(f"{len(queries)} queries, {engine.index.n_docs} documents, {k} groups, top {TOP}\n")
+    chamber = engine.partitions_chamber
+    inside = {d for d, c in engine.chambers.items() if c == chamber}
+    queries = sorted({doc["subject"] for d, doc in engine.documents.items() if d in inside and doc.get("subject")})
+    print(f"Chamber {chamber}: {len(queries)} queries, {len(inside)} documents, {k} groups, top {TOP}\n")
 
     rows, summary = [], []
     for n_probe in range(1, k + 1):
         overlap, top1, scored, t_full, t_part, used = [], [], [], [], [], 0
         for q in queries:
             terms = engine.analyzer.analyze(q)
-            full = engine.search(q, k=TOP)
-            part = engine.search(q, k=TOP, n_probe=n_probe)
+            full = engine.search(q, k=TOP, chamber=chamber)
+            part = engine.search(q, k=TOP, n_probe=n_probe, chamber=chamber)
             if not full.results:
                 continue
             used += 1
@@ -47,7 +50,7 @@ def main() -> None:
             overlap.append(len(set(a) & set(b)) / len(a))
             top1.append(a[0] == (b[0] if b else None))
             scored.append(part.scored / max(1, full.scored))
-            t_full.append(timed(lambda: engine.model.cosine_scores(terms), 3))
+            t_full.append(timed(lambda: engine.model.cosine_scores(terms, inside), 3))
             groups, _, _ = p.route(terms, n_probe)
             t_part.append(timed(lambda: (p.route(terms, n_probe), p.cosine_scores(terms, groups)), 3))
             rows.append([n_probe, q[:60], f"{overlap[-1]:.2f}", a[0] == (b[0] if b else None), full.scored, part.scored])
