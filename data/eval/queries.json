@@ -1,42 +1,16 @@
 [
-  {
-    "query": "عقد البيع العقاري",
-    "relevant_doc_ids": []
-  },
-  {
-    "query": "التسجيل والتحفيظ العقاري",
-    "relevant_doc_ids": []
-  },
-  {
-    "query": "الملكية والحيازة",
-    "relevant_doc_ids": []
-  },
-  {
-    "query": "الكراء والإفراغ",
-    "relevant_doc_ids": []
-  },
-  {
-    "query": "الرهن العقاري",
-    "relevant_doc_ids": []
-  },
-  {
-    "query": "القسمة والشياع",
-    "relevant_doc_ids": []
-  },
-  {
-    "query": "التعرض على مطلب التحفيظ",
-    "relevant_doc_ids": []
-  },
-  {
-    "query": "التعويض عن نزع الملكية",
-    "relevant_doc_ids": []
-  },
-  {
-    "query": "الاختصاص القضائي العقاري",
-    "relevant_doc_ids": []
-  },
-  {
-    "query": "التقادم في الحقوق العينية",
-    "relevant_doc_ids": []
-  }
+  {"id": "q01", "query": "شروط الشفعة", "chamber": "real_estate"},
+  {"id": "q02", "query": "التعرض على مطلب التحفيظ", "chamber": "real_estate"},
+  {"id": "q03", "query": "دعوى الإفراغ للاحتلال بدون سند", "chamber": "real_estate"},
+  {"id": "q04", "query": "الحيازة وشروطها", "chamber": "real_estate"},
+  {"id": "q05", "query": "قسمة العقار المشاع", "chamber": "real_estate"},
+  {"id": "q06", "query": "تقييد الهبة بالرسم العقاري", "chamber": "real_estate"},
+  {"id": "q07", "query": "الطعن بإعادة النظر", "chamber": "real_estate"},
+  {"id": "q08", "query": "نفقة الأبناء", "chamber": "personal_status"},
+  {"id": "q09", "query": "إثبات النسب", "chamber": "personal_status"},
+  {"id": "q10", "query": "التطليق للشقاق", "chamber": "personal_status"},
+  {"id": "q11", "query": "قسمة التركة بين الورثة", "chamber": "personal_status"},
+  {"id": "q12", "query": "حضانة الأطفال", "chamber": "personal_status"},
+  {"id": "q13", "query": "الصداق", "chamber": "personal_status"},
+  {"id": "q14", "query": "ثبوت الزوجية", "chamber": "personal_status"}
 ]
